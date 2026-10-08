@@ -1,0 +1,190 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Checks if the authenticated user has role == 'admin' in /guards/{uid}
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          request.auth.token.admin == true ||
+          (request.auth.token.email != null && request.auth.token.email.lower() == 'vaibhavpawase143@gmail.com') ||
+          (exists(/databases/$(database)/documents/guards/$(request.auth.uid)) &&
+           get(/databases/$(database)/documents/guards/$(request.auth.uid)).data.role.lower() == 'admin' &&
+           get(/databases/$(database)/documents/guards/$(request.auth.uid)).data.isActive == true)
+        );
+    }
+
+    // Checks if the user is an active guard
+    function isGuard() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/guards/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/guards/$(request.auth.uid)).data.role.lower() == 'guard' &&
+        get(/databases/$(database)/documents/guards/$(request.auth.uid)).data.isActive == true;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Guards Collection
+    match /guards/{guardId} {
+      // Authenticated users can read guard profiles
+      allow read: if isAuthenticated();
+
+      // Only Admins can create guard accounts
+      allow create: if isAdmin();
+
+      // Admins can update any guard; Guards can only update their own non-privileged details
+      allow update: if isAdmin() || (
+        isOwner(guardId) &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.isActive == resource.data.isActive
+      );
+
+      // Deletions are strictly Admin-only (and generally soft-deactivation is preferred)
+      allow delete: if isAdmin();
+    }
+
+    // Shifts Collection
+    match /shifts/{shiftId} {
+      allow read: if isAuthenticated();
+      // Only Admins can create, edit, or cancel shifts
+      // Guards CANNOT create, edit, or delete shifts
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Shift Schedules (Recurring Rules)
+    match /shift_schedules/{scheduleId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Schedule Exceptions (Skip Date / Override)
+    match /schedule_exceptions/{exceptionId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // System Settings Configuration (settings/system_config)
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Audit Logs
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      // Any authenticated action can append audit logs, but cannot edit or delete
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && (
+        resource.data.recipientUserId == request.auth.uid ||
+        resource.data.recipientUserId == 'all' ||
+        (resource.data.recipientUserId == 'admin' && isAdmin()) ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        resource.data.recipientUserId == request.auth.uid ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Counters (Numeric sequence counters for tickets)
+    match /counters/{counterId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // Parking Records
+    match /parking_records/{ticketId} {
+      allow read: if isAuthenticated();
+      // Active guards and admins can create parking entries
+      allow create: if isAuthenticated() && (isAdmin() || isGuard());
+      // Updates allowed for active operations (exits, payment status)
+      allow update: if isAuthenticated() && (isAdmin() || isGuard());
+      // Deletions strictly Admin only
+      allow delete: if isAdmin();
+    }
+
+    // Payment Transactions (Authoritative Financial Ledger)
+    match /payment_transactions/{txnId} {
+      allow read: if isAuthenticated();
+      // Active guards and admins can append payment transactions
+      allow create: if isAuthenticated() && (isAdmin() || isGuard());
+      // Transactions are immutable audit ledger entries; updates restricted to Admin; deletions forbidden
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // Monthly Passes
+    match /monthly_passes/{passId} {
+      // Authenticated users (Guards and Admins) can read to check validity
+      allow read: if isAuthenticated();
+      // Strictly Admin only for creation, modification, or cancellation
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Guard Financial Handovers
+    match /handovers/{handoverId} {
+      allow read: if isAuthenticated();
+      // Initiator must be the authenticated fromGuard, active Guard, or Admin
+      allow create: if isAuthenticated() && (
+        isAdmin() ||
+        request.resource.data.fromGuardId == request.auth.uid ||
+        (request.resource.data.fromGuardEmail != null && request.resource.data.fromGuardEmail == request.auth.token.email) ||
+        isGuard()
+      );
+      // Receiving guard can accept/reject; Outgoing guard can cancel; Admin can manage.
+      // Guards cannot modify a handover once it is completed/accepted/rejected/cancelled.
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        (
+          resource.data.status == 'PENDING' &&
+          (
+            ((resource.data.toGuardId == request.auth.uid || (resource.data.toGuardEmail != null && resource.data.toGuardEmail == request.auth.token.email) || isGuard()) && request.resource.data.status in ['ACCEPTED', 'REJECTED']) ||
+            ((resource.data.fromGuardId == request.auth.uid || (resource.data.fromGuardEmail != null && resource.data.fromGuardEmail == request.auth.token.email) || isGuard()) && request.resource.data.status == 'CANCELLED')
+          )
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Admin Withdrawals & Settlements
+    match /withdrawals/{withdrawalId} {
+      allow read: if isAuthenticated();
+      // Only Admin can execute withdrawals
+      allow create: if isAdmin();
+      // Withdrawals are immutable historical settlement records
+      allow update, delete: if false;
+    }
+
+    // Financial Responsibility Carry-Forward & History Events
+    match /responsibility_events/{eventId} {
+      allow read: if isAuthenticated();
+      // Guard can log own responsibility events;
+      // Receiving/outgoing guard can log handover responsibility transfer events;
+      // Admin can log any
+      allow create: if isAuthenticated() && (
+        isAdmin() ||
+        request.resource.data.guardId == request.auth.uid ||
+        (request.resource.data.targetGuardId != null && request.resource.data.targetGuardId == request.auth.uid) ||
+        isGuard()
+      );
+      allow update, delete: if false;
+    }
+  }
+}

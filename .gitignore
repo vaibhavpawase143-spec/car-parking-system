@@ -1,0 +1,75 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ / IDE related
+*.iml
+*.ipr
+*.iws
+.idea/
+.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.flutter-plugins
+.pub-cache/
+.pub/
+build/
+/coverage/
+ephemeral/
+**/ephemeral/
+
+# Android build artifacts & configs
+/android/app/debug
+/android/app/profile
+/android/app/release
+.gradle/
+local.properties
+GeneratedPluginRegistrant.*
+*.apk
+*.aab
+
+# Widget Preview related
+.widget_preview/
+
+# Environment & Secrets
+.env
+.env.*
+*.key
+*.pem
+service-account*.json
+google-credentials*.json
+*service_account*.json
+users.json
+browser_console_logs.json
+
+# Node dependencies
+node_modules/
+**/node_modules/
+
+# Agent & IDE internal directories
+.agent/
+.agents/
+.gemini/
+.gsd/
+
+# Temporary test artifacts, audit screenshots & scratch scripts
+scratch/
+/*.png
+test/*.js
+scripts/*.mjs
+scripts/*.py
+scripts/cleanup_firestore.js

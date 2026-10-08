@@ -1,0 +1,31 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "car-parking-system-2026",
+          "appId": "1:1064513265160:android:7cb22ec19491fc30997bbd",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "car-parking-system-2026",
+          "configurations": {
+            "android": "1:1064513265160:android:7cb22ec19491fc30997bbd",
+            "ios": "1:1064513265160:ios:c00cbdc44e2eb4cb997bbd",
+            "macos": "1:1064513265160:ios:c00cbdc44e2eb4cb997bbd",
+            "web": "1:1064513265160:web:2d44f9eb53f84822997bbd",
+            "windows": "1:1064513265160:web:2907059492bd3888997bbd"
+          }
+        }
+      }
+    }
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}

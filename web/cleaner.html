@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Firestore Cleanup Utility</title>
+</head>
+<body style="font-family: monospace; padding: 20px; background: #0F172A; color: #F8FAFC;">
+  <h2>CAR PARKING SYSTEM — MASTER DATA CLEANER</h2>
+  <div id="output" style="white-space: pre-wrap; line-height: 1.5;">Initializing Firebase JS SDK...</div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { getFirestore, collection, getDocs, deleteDoc, doc, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDg71viXRmPjLQoFuUTzYfFkzb4eED9hJQ",
+      appId: "1:1064513265160:web:2d44f9eb53f84822997bbd",
+      projectId: "car-parking-system-2026",
+      authDomain: "car-parking-system-2026.firebaseapp.com",
+      storageBucket: "car-parking-system-2026.firebasestorage.app"
+    };
+
+    const out = document.getElementById("output");
+    function log(msg) {
+      out.textContent += "\n" + msg;
+      console.log(msg);
+    }
+
+    async function runCleanup() {
+      try {
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        log("Authenticating as Admin (a@gmail.com)...");
+        const cred = await signInWithEmailAndPassword(auth, "a@gmail.com", "123456");
+        log(`Authenticated successfully. UID: ${cred.user.uid}`);
+
+        const transactionalCols = [
+          "handovers",
+          "responsibility_events",
+          "payment_transactions",
+          "parking_records",
+          "notifications",
+          "withdrawals",
+          "settlements"
+        ];
+
+        const preservedCols = [
+          "guards",
+          "users",
+          "system_config",
+          "shifts",
+          "monthly_passes"
+        ];
+
+        log("\n--- [STEP 1] PRE-CLEANUP DOCUMENT COUNTS ---");
+        const docsToDelete = {};
+        for (const col of transactionalCols) {
+          const snap = await getDocs(collection(db, col));
+          docsToDelete[col] = snap.docs;
+          log(`  * ${col}: ${snap.docs.length} documents found`);
+        }
+
+        log("\n--- [STEP 2] PRESERVED MASTER CONFIGURATIONS ---");
+        for (const col of preservedCols) {
+          const snap = await getDocs(collection(db, col));
+          log(`  * ${col}: ${snap.docs.length} documents (PRESERVED - UNTOUCHED)`);
+        }
+
+        log("\n--- [STEP 3] DELETING TRANSACTIONAL / TEST RECORDS ---");
+        for (const col of transactionalCols) {
+          const docs = docsToDelete[col];
+          if (docs.length === 0) {
+            log(`  -> ${col}: 0 documents (Already clean)`);
+            continue;
+          }
+          let deleted = 0;
+          // Batch delete in chunks of 400
+          for (let i = 0; i < docs.length; i += 400) {
+            const chunk = docs.slice(i, i + 400);
+            const batch = writeBatch(db);
+            for (const d of chunk) {
+              batch.delete(d.ref);
+            }
+            await batch.commit();
+            deleted += chunk.length;
+          }
+          log(`  -> Cleaned ${col}: ${deleted}/${docs.length} documents deleted.`);
+        }
+
+        log("\n--- [STEP 4] POST-CLEANUP VERIFICATION ---");
+        let allClean = true;
+        for (const col of transactionalCols) {
+          const snap = await getDocs(collection(db, col));
+          log(`  * ${col}: ${snap.docs.length} documents remaining`);
+          if (snap.docs.length > 0) allClean = false;
+        }
+
+        log("\n--- [STEP 5] PRESERVED MASTER DATA INTEGRITY ---");
+        for (const col of preservedCols) {
+          const snap = await getDocs(collection(db, col));
+          log(`  * ${col}: ${snap.docs.length} documents intact and active`);
+        }
+
+        if (allClean) {
+          log("\n=== STATUS: CLEANUP COMPLETED SUCCESSFULLY ===");
+          window.cleanupResult = "SUCCESS";
+        } else {
+          log("\n=== STATUS: WARNING — CHECK REMAINING DOCUMENTS ===");
+          window.cleanupResult = "INCOMPLETE";
+        }
+      } catch (err) {
+        log(`\n[FATAL ERROR] ${err.message}`);
+        console.error(err);
+        window.cleanupResult = "ERROR: " + err.message;
+      }
+    }
+
+    runCleanup();
+  </script>
+</body>
+</html>
