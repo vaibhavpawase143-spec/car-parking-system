@@ -4,7 +4,6 @@ import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:car_parking_system/models/parking_record_model.dart';
 import 'package:car_parking_system/models/vehicle_type.dart';
 import 'package:car_parking_system/services/receipt_print_service.dart';
-import 'package:car_parking_system/services/receipt_print_mobile.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

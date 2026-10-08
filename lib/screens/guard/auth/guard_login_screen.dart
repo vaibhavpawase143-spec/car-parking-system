@@ -312,9 +312,9 @@ class _GuardLoginScreenState extends State<GuardLoginScreen> {
                                     ),
                                   );
                                 },
-                          child: const Text(
-                            'Forgot Password?',
-                            style: TextStyle(fontSize: 12),
+                          child: Text(
+                            AppStrings.forgotPassword,
+                            style: const TextStyle(fontSize: 12),
                           ),
                         ),
                       ),

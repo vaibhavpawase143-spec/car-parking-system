@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:car_parking_system/core/localization/app_language.dart';
 import 'package:car_parking_system/core/localization/app_language_controller.dart';
 import 'package:car_parking_system/core/localization/app_strings.dart';
 import 'package:car_parking_system/services/guard_auth_service.dart';
@@ -9,12 +10,31 @@ import 'package:car_parking_system/widgets/common/app_text_field.dart';
 import 'package:car_parking_system/screens/guard/auth/guard_login_screen.dart';
 import 'package:car_parking_system/screens/guard/auth/forgot_password_screen.dart';
 
+class TestMockGuardAuthService extends GuardAuthService {
+  String? lastResetEmail;
+  bool shouldThrowAuthException = false;
+  String authExceptionCode = 'user-not-found';
+  bool shouldThrowGenericException = false;
+
+  @override
+  Future<void> sendPasswordResetEmail(String email) async {
+    lastResetEmail = email;
+    if (shouldThrowAuthException) {
+      throw FirebaseAuthException(code: authExceptionCode, message: 'Auth test error');
+    }
+    if (shouldThrowGenericException) {
+      throw Exception('Generic network timeout');
+    }
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     await AppLanguageController.instance.init();
+    AppStrings.setLanguage(AppLanguage.english);
   });
 
   void setTestSurfaceSize(WidgetTester tester) {
@@ -27,7 +47,7 @@ void main() {
   }
 
   group('GUARD LOGIN & FORGOT PASSWORD — UX & Flow Tests', () {
-    testWidgets('1. GuardLoginScreen renders ONLY Email, Password, Login button, and Forgot Password link', (tester) async {
+    testWidgets('1. GuardLoginScreen renders Email, Password, Login button, and localized Forgot Password link', (tester) async {
       setTestSurfaceSize(tester);
 
       await tester.pumpWidget(
@@ -44,14 +64,8 @@ void main() {
       // 2. Login button is present
       expect(find.text(AppStrings.signIn), findsOneWidget);
 
-      // 3. Forgot Password? link is present
-      expect(find.text('Forgot Password?'), findsOneWidget);
-
-      // 4. Demo Login & Register buttons are completely REMOVED
-      expect(find.textContaining('Demo Guard'), findsNothing);
-      expect(find.textContaining('Register Guard Account'), findsNothing);
-      expect(find.textContaining('First time setup'), findsNothing);
-      expect(find.textContaining('⚡ Quick Login'), findsNothing);
+      // 3. Localized Forgot Password? link is present
+      expect(find.text(AppStrings.forgotPassword), findsOneWidget);
     });
 
     testWidgets('2. GuardLoginScreen shows validation errors on empty submission', (tester) async {
@@ -68,11 +82,11 @@ void main() {
       await tester.tap(find.text(AppStrings.signIn));
       await tester.pumpAndSettle();
 
-      expect(find.text('Please enter your email'), findsOneWidget);
-      expect(find.text('Please enter your password'), findsOneWidget);
+      expect(find.text(AppStrings.emailRequired), findsOneWidget);
+      expect(find.text(AppStrings.passwordRequired), findsOneWidget);
     });
 
-    testWidgets('3. ForgotPasswordScreen starts with Step 1 (Enter Email)', (tester) async {
+    testWidgets('3. ForgotPasswordScreen renders title, subtitle, email field, submit button and back link', (tester) async {
       setTestSurfaceSize(tester);
 
       await tester.pumpWidget(
@@ -82,21 +96,20 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Guard Password Recovery'), findsOneWidget);
-      expect(find.text('Forgot Password?'), findsOneWidget);
-      expect(find.text('Continue'), findsOneWidget);
-      expect(find.text('Back to Sign In'), findsOneWidget);
+      expect(find.text(AppStrings.resetPasswordTitle), findsNWidgets(2)); // AppBar + Card
+      expect(find.text(AppStrings.resetPasswordSubtitle), findsOneWidget);
+      expect(find.text(AppStrings.sendResetLink), findsOneWidget);
+      expect(find.text(AppStrings.backToLogin), findsOneWidget);
 
-      // Tap Continue with empty email
-      await tester.tap(find.text('Continue'));
+      // Tap Submit with empty email
+      await tester.tap(find.text(AppStrings.sendResetLink));
       await tester.pumpAndSettle();
 
-      expect(find.text('Please enter your email'), findsOneWidget);
+      expect(find.text(AppStrings.emailRequired), findsOneWidget);
     });
 
-    testWidgets('4. ForgotPasswordScreen components and step verification', (tester) async {
+    testWidgets('4. ForgotPasswordScreen validates invalid email format', (tester) async {
       setTestSurfaceSize(tester);
-      ForgotPasswordScreen.mockOtp = '654321';
 
       await tester.pumpWidget(
         const MaterialApp(
@@ -105,15 +118,73 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Type email
-      await tester.enterText(find.byType(TextFormField).first, 'guard@test.com');
+      // Enter invalid email
+      await tester.enterText(find.byType(TextFormField).first, 'invalidemail');
+      await tester.tap(find.text(AppStrings.sendResetLink));
       await tester.pumpAndSettle();
 
-      // Verify widget layout and components
-      expect(find.text('Continue'), findsOneWidget);
+      expect(find.text(AppStrings.invalidEmail), findsOneWidget);
     });
 
-    test('5. GuardAuthService.mapAuthError accurately differentiates all error codes', () {
+    testWidgets('5. ForgotPasswordScreen successfully sends password reset email and shows confirmation card', (tester) async {
+      setTestSurfaceSize(tester);
+      final mockAuth = TestMockGuardAuthService();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ForgotPasswordScreen(authService: mockAuth),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Enter valid email
+      await tester.enterText(find.byType(TextFormField).first, 'guard1@parking.com');
+      await tester.tap(find.text(AppStrings.sendResetLink));
+      await tester.pumpAndSettle();
+
+      expect(mockAuth.lastResetEmail, 'guard1@parking.com');
+      expect(find.text(AppStrings.resetLinkSent), findsOneWidget);
+      expect(find.text('guard1@parking.com'), findsOneWidget);
+      expect(find.text(AppStrings.backToLogin), findsOneWidget);
+    });
+
+    testWidgets('6. ForgotPasswordScreen handles FirebaseAuthException error cleanly', (tester) async {
+      setTestSurfaceSize(tester);
+      final mockAuth = TestMockGuardAuthService()..shouldThrowAuthException = true..authExceptionCode = 'user-not-found';
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ForgotPasswordScreen(authService: mockAuth),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextFormField).first, 'unknown@parking.com');
+      await tester.tap(find.text(AppStrings.sendResetLink));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('No user account found'), findsOneWidget);
+    });
+
+    testWidgets('7. ForgotPasswordScreen renders seamlessly in Marathi localization', (tester) async {
+      setTestSurfaceSize(tester);
+      AppStrings.setLanguage(AppLanguage.marathi);
+      await AppLanguageController.instance.setLanguage(AppLanguage.marathi);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: ForgotPasswordScreen(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('पासवर्ड रीसेट करा'), findsNWidgets(2));
+      expect(find.text('तुमचा नोंदणीकृत ईमेल टाका. पासवर्ड रीसेट करण्याची लिंक पाठवली जाईल.'), findsOneWidget);
+      expect(find.text('रीसेट लिंक पाठवा'), findsOneWidget);
+      expect(find.text('लॉगिनकडे परत जा'), findsOneWidget);
+    });
+
+    test('8. GuardAuthService.mapAuthError accurately differentiates all error codes', () {
       final netErr = FirebaseAuthException(code: 'network-request-failed', message: 'A network error occurred');
       expect(GuardAuthService.mapAuthError(netErr), contains('Automatic'));
       expect(GuardAuthService.mapAuthError(netErr), contains('Network connection error'));

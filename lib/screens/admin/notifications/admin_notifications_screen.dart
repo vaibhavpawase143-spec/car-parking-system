@@ -43,10 +43,10 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
       case 'shift': return AppStrings.shift;
       case 'cash': return AppStrings.cashLabel;
       case 'upi': return AppStrings.upiLabel;
-      case 'handover': return 'Handover';
-      case 'withdrawal': return 'Withdrawal';
-      case 'security': return 'Security';
-      case 'system': return 'System';
+      case 'handover': return AppStrings.handover;
+      case 'withdrawal': return AppStrings.withdrawal;
+      case 'security': return AppStrings.security;
+      case 'system': return AppStrings.systemCategory;
       default: return cat;
     }
   }
@@ -81,9 +81,13 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
 
           if (_searchQuery.isNotEmpty) {
             final q = _searchQuery.toLowerCase();
-            list = list.where((n) =>
-                n.title.toLowerCase().contains(q) ||
-                n.message.toLowerCase().contains(q)).toList();
+            list = list.where((n) {
+              final locTitle = n.localizedTitle.toLowerCase();
+              final locMsg = n.localizedMessage.toLowerCase();
+              final origTitle = n.title.toLowerCase();
+              final origMsg = n.message.toLowerCase();
+              return locTitle.contains(q) || locMsg.contains(q) || origTitle.contains(q) || origMsg.contains(q);
+            }).toList();
           }
 
           if (_categoryFilter != 'all') {
@@ -114,7 +118,7 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                     TextField(
                       controller: _searchController,
                       decoration: InputDecoration(
-                        hintText: '${AppStrings.search} notifications...',
+                        hintText: AppStrings.searchNotifications,
                         prefixIcon: const Icon(Icons.search, size: 20),
                         suffixIcon: _searchQuery.isNotEmpty
                             ? IconButton(
@@ -162,8 +166,8 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                           onSelected: (v) => setState(() => _readFilter = v),
                           itemBuilder: (ctx) => [
                             PopupMenuItem(value: 'all', child: Text(AppStrings.all)),
-                            const PopupMenuItem(value: 'unread', child: Text('Unread')),
-                            const PopupMenuItem(value: 'read', child: Text('Read')),
+                            PopupMenuItem(value: 'unread', child: Text(AppStrings.unread)),
+                            PopupMenuItem(value: 'read', child: Text(AppStrings.read)),
                           ],
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -289,7 +293,7 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                                           crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
                                             Text(
-                                              item.title,
+                                              item.localizedTitle,
                                               style: TextStyle(
                                                 fontWeight: item.isRead ? FontWeight.w600 : FontWeight.bold,
                                                 fontSize: 14,
@@ -298,7 +302,7 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                                             ),
                                             const SizedBox(height: 4),
                                             Text(
-                                              item.message,
+                                              item.localizedMessage,
                                               style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                                             ),
                                             const SizedBox(height: 6),
@@ -318,7 +322,7 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                                                       border: Border.all(color: catColor.withValues(alpha: 0.3)),
                                                     ),
                                                     child: Text(
-                                                      item.type.toUpperCase(),
+                                                      item.localizedCategory.toUpperCase(),
                                                       style: TextStyle(
                                                         fontSize: 9,
                                                         fontWeight: FontWeight.bold,

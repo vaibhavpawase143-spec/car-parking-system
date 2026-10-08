@@ -52,6 +52,10 @@ class ReceiptPlatformPrinter {
     return await printHtml(html);
   }
 
+  static Future<bool> printMonthlyPassReceipt(dynamic pass, String html) async {
+    return await printHtml(html);
+  }
+
   static String? savedPrinterName;
   static String? savedMacAddress;
   static String? lastErrorMessage;

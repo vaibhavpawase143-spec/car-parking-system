@@ -160,7 +160,14 @@ class GuardAuthService {
     }
   }
 
-  /// Updates guard security credential timestamp in Firestore upon successful OTP verification.
+  /// Sends a password reset email using Firebase Authentication.
+  Future<void> sendPasswordResetEmail(String email) async {
+    final cleanEmail = email.trim().toLowerCase();
+    debugPrint('[AUTH DEBUG] Sending password reset email to: $cleanEmail');
+    await _auth.sendPasswordResetEmail(email: cleanEmail);
+  }
+
+  /// Updates guard security credential timestamp in Firestore upon password reset.
   Future<bool> resetGuardPassword({
     required String uid,
     required String newPassword,

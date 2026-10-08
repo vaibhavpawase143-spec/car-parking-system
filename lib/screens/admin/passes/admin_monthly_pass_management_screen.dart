@@ -86,13 +86,45 @@ class _AdminMonthlyPassManagementScreenState extends State<AdminMonthlyPassManag
     );
   }
 
-  void _printPassReceipt(MonthlyPassModel pass) {
+  Future<void> _printPassReceipt(MonthlyPassModel pass) async {
     try {
-      ReceiptPrintService.printMonthlyPassReceipt(pass);
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(AppStrings.printing),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+
+      final success = await ReceiptPrintService.printMonthlyPassReceipt(pass);
+      if (!mounted) return;
+
+      if (success) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(AppStrings.printSuccessNotice),
+            backgroundColor: AppColors.success,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      } else {
+        final errorMsg = ReceiptPlatformPrinter.lastErrorMessage ?? AppStrings.printFailedNotice;
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(errorMsg),
+            backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
     } catch (e) {
       debugPrint('[MonthlyPass] Print error: $e');
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${AppStrings.error}: $e')),
+        SnackBar(
+          content: Text('${AppStrings.error}: $e'),
+          backgroundColor: AppColors.error,
+        ),
       );
     }
   }

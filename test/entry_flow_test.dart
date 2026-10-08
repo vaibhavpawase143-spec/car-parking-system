@@ -6,7 +6,6 @@ import 'package:car_parking_system/screens/guard/entry/entry_success_screen.dart
 import 'package:car_parking_system/services/qr_share_service.dart';
 import 'package:car_parking_system/services/qr_share_stub.dart';
 import 'package:car_parking_system/services/receipt_print_service.dart';
-import 'package:car_parking_system/services/receipt_print_stub.dart';
 import 'package:car_parking_system/services/whatsapp_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

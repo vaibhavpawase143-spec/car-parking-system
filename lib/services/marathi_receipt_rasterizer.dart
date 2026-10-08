@@ -8,7 +8,9 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../core/config/business_profile.dart';
 import '../core/localization/app_language.dart';
 import '../core/utils/formatters.dart';
+import '../models/monthly_pass_model.dart';
 import '../models/parking_record_model.dart';
+import '../models/vehicle_type.dart';
 
 /// High-contrast, razor-sharp monochrome rasterizer for 58mm thermal printers (Caysn P58H50 / PSF58H).
 ///
@@ -178,6 +180,14 @@ class MarathiReceiptRasterizer {
   /// Renders the BizFlow Branding Footer for 58mm thermal receipts.
   static Future<img.Image> renderBizFlowFooter({required AppLanguage language}) async {
     final painter = _BizFlowFooterPainter(language: language);
+    final height = painter.measureHeight(safeContentWidth);
+    return await painterToImage(painter, Size(printableWidth, height));
+  }
+
+  /// Renders the complete Marathi Monthly Pass Receipt Slip for 58mm thermal printers.
+  static Future<img.Image> renderMonthlyPassSlip(MonthlyPassModel pass, {BusinessProfile? profile}) async {
+    final p = profile ?? BusinessProfileController.instance.profile;
+    final painter = _MarathiMonthlyPassPainter(pass: pass, profile: p);
     final height = painter.measureHeight(safeContentWidth);
     return await painterToImage(painter, Size(printableWidth, height));
   }
@@ -647,4 +657,115 @@ void _drawDashedLine(Canvas canvas, double y, double width, {double leftOffset =
     canvas.drawLine(Offset(startX, y), Offset(startX + dashWidth, y), paint);
     startX += dashWidth + dashSpace;
   }
+}
+
+class _MarathiMonthlyPassPainter extends CustomPainter {
+  final MonthlyPassModel pass;
+  final BusinessProfile profile;
+
+  _MarathiMonthlyPassPainter({required this.pass, required this.profile});
+
+  double measureHeight(double width) {
+    double total = 8;
+    total += _measureText(profile.marathiHeaderTag, 20, bold: true, width: width);
+    total += 6;
+    total += _measureText(profile.marathiGovernmentTag, 15.5, bold: true, width: width);
+    total += 8;
+    total += _measureText(profile.businessNameMarathi, 24, bold: true, width: width);
+    total += 6;
+    total += _measureText(profile.locationMarathi, 17.5, bold: true, width: width);
+    total += 4;
+    total += _measureText(profile.mobileMarathi, 17.5, bold: true, width: width);
+    total += 8;
+    total += 12; // divider
+    total += _measureText('मासिक पास', 22, bold: true, width: width);
+    total += 12; // divider
+    total += 26; // pass number row
+    total += 10; // spacing
+    total += 54; // vehicle box
+    total += 26; // vehicle type
+    total += 26; // customer
+    total += 26; // mobile
+    total += 12; // divider
+    total += 26; // validity
+    total += 12; // divider
+    total += 26; // pass amount
+    total += 26; // payment
+    total += 26; // parking fee in validity
+    total += 12; // divider
+    total += _measureText('धन्यवाद!', 18, bold: true, width: width);
+    total += 12;
+    return total;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    double y = 8;
+    const safeW = MarathiReceiptRasterizer.safeContentWidth;
+
+    // Header
+    y = _drawCenteredText(canvas, profile.marathiHeaderTag, y, 20, bold: true, width: safeW);
+    y += 6;
+    y = _drawCenteredText(canvas, profile.marathiGovernmentTag, y, 15.5, bold: true, width: safeW);
+    y += 8;
+    y = _drawCenteredText(canvas, profile.businessNameMarathi, y, 24, bold: true, width: safeW);
+    y += 6;
+    y = _drawCenteredText(canvas, profile.locationMarathi, y, 17.5, bold: true, width: safeW);
+    y += 4;
+    y = _drawCenteredText(canvas, profile.mobileMarathi, y, 17.5, bold: true, width: safeW);
+    y += 8;
+
+    _drawDashedLine(canvas, y, safeW);
+    y += 8;
+    y = _drawCenteredText(canvas, 'मासिक पास', y, 22, bold: true, width: safeW);
+    y += 6;
+    _drawDashedLine(canvas, y, safeW);
+    y += 8;
+
+    // Pass number
+    y = _drawKeyValueRow(canvas, 'पास क्रमांक:', pass.passNumber, y, safeW, isBold: true, fontSize: 18);
+
+    // Vehicle Box
+    final vNum = AppFormatters.normalizeVehicleNumber(pass.vehicleNumber);
+    const vBoxH = 48.0;
+    final vBoxPaint = Paint()
+      ..color = Colors.black
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTWH(MarathiReceiptRasterizer.safeLeftMargin + 4, 0, safeW - 8, vBoxH).shift(Offset(0, y)),
+        const Radius.circular(4),
+      ),
+      vBoxPaint,
+    );
+    _drawCenteredText(canvas, vNum, y + 10, 24, bold: true, width: safeW);
+    y += vBoxH + 8;
+
+    final vehicleTypeLabel = pass.vehicleType == VehicleType.twoWheeler ? 'दुचाकी' : 'चारचाकी';
+    final paymentMethodLabel = pass.paymentMethod.toUpperCase() == 'CASH' ? 'रोख' : 'UPI';
+    final startDateStr = AppFormatters.formatDate(pass.startDate, isMarathi: true);
+    final endDateStr = AppFormatters.formatDate(pass.endDate, isMarathi: true);
+
+    y = _drawKeyValueRow(canvas, 'वाहन प्रकार:', vehicleTypeLabel, y, safeW);
+    y = _drawKeyValueRow(canvas, 'ग्राहक:', pass.customerName, y, safeW);
+    y = _drawKeyValueRow(canvas, 'मोबाईल:', pass.customerMobile, y, safeW);
+
+    _drawDashedLine(canvas, y, safeW);
+    y += 8;
+    y = _drawKeyValueRow(canvas, 'वैधता:', '$startDateStr - $endDateStr', y, safeW, isBold: true);
+    _drawDashedLine(canvas, y, safeW);
+    y += 8;
+
+    y = _drawKeyValueRow(canvas, 'पास रक्कम:', '₹${pass.amount.toInt()}', y, safeW, isBold: true, fontSize: 18);
+    y = _drawKeyValueRow(canvas, 'पेमेंट:', 'भरलेले ($paymentMethodLabel)', y, safeW);
+    y = _drawKeyValueRow(canvas, 'वैधतेदरम्यान शुल्क:', '₹०', y, safeW);
+
+    _drawDashedLine(canvas, y, safeW);
+    y += 8;
+    y = _drawCenteredText(canvas, 'धन्यवाद!', y, 18, bold: true, width: safeW);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

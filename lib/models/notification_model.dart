@@ -1,4 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../core/localization/app_language.dart';
+import '../core/localization/notification_localizer.dart';
 
 /// Reusable global in-app notification model.
 class NotificationModel {
@@ -21,6 +23,23 @@ class NotificationModel {
     this.relatedEntityId,
     required this.createdAt,
   });
+
+  /// Real-time localized title based on active application language.
+  String get localizedTitle => NotificationLocalizer.localizeTitle(this);
+
+  /// Real-time localized message based on active application language.
+  String get localizedMessage => NotificationLocalizer.localizeMessage(this);
+
+  /// Real-time localized category tag based on active application language.
+  String get localizedCategory => NotificationLocalizer.localizeCategory(type);
+
+  /// Specific language localized title.
+  String getLocalizedTitle(AppLanguage language) =>
+      NotificationLocalizer.localizeTitle(this, language: language);
+
+  /// Specific language localized message.
+  String getLocalizedMessage(AppLanguage language) =>
+      NotificationLocalizer.localizeMessage(this, language: language);
 
   factory NotificationModel.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
@@ -75,3 +94,4 @@ class NotificationModel {
     );
   }
 }
+

@@ -9,6 +9,9 @@ import '../models/vehicle_type.dart';
 import 'receipt_print_stub.dart'
     if (dart.library.html) 'receipt_print_web.dart'
     if (dart.library.io) 'receipt_print_mobile.dart';
+export 'receipt_print_stub.dart'
+    if (dart.library.html) 'receipt_print_web.dart'
+    if (dart.library.io) 'receipt_print_mobile.dart';
 
 /// Service for generating and printing 58 mm thermal parking entry receipts.
 /// Strictly formatted for 58 mm thermal receipt printers (MPT-II / POS58)
@@ -852,6 +855,6 @@ class ReceiptPrintService {
   static Future<bool> printMonthlyPassReceipt(MonthlyPassModel pass, {AppLanguage? language}) async {
     final lang = language ?? AppLanguageController.instance.currentLanguage;
     final html = buildMonthlyPassReceiptHtml(pass, language: lang);
-    return await ReceiptPlatformPrinter.printHtml(html);
+    return await ReceiptPlatformPrinter.printMonthlyPassReceipt(pass, html);
   }
 }

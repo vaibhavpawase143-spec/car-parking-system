@@ -646,8 +646,13 @@ class AppStrings {
       ? 'नवीन सूचना किंवा पाळीचे अपडेट्स आल्यावर येथे दिसतील.'
       : 'New alerts, shift assignments, and updates will appear here.';
   static String get markAllAsRead => _isMarathi ? 'सर्व वाचले म्हणून चिन्हांकित करा' : 'Mark All as Read';
+  static String get markAsRead => _isMarathi ? 'वाचले म्हणून खूण करा' : 'Mark Read';
   static String get unread => _isMarathi ? 'न वाचलेले' : 'Unread';
   static String get read => _isMarathi ? 'वाचलेले' : 'Read';
+  static String get searchNotifications => _isMarathi ? 'सूचना शोधा...' : 'Search notifications...';
+  static String get withdrawal => _isMarathi ? 'काढणे' : 'Withdrawal';
+  static String get security => _isMarathi ? 'सुरक्षा' : 'Security';
+  static String get systemCategory => _isMarathi ? 'सिस्टम' : 'System';
 
   // ---------------------------------------------------------------------------
   // ADMIN PORTAL & DASHBOARD

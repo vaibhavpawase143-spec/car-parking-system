@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:car_parking_system/core/localization/app_language.dart';
+import 'package:car_parking_system/models/monthly_pass_model.dart';
 import 'package:car_parking_system/models/parking_record_model.dart';
 import 'package:car_parking_system/models/vehicle_type.dart';
 import 'package:car_parking_system/services/marathi_receipt_rasterizer.dart';
@@ -105,6 +106,35 @@ void main() {
       final rightMargin = MarathiReceiptRasterizer.printableWidth -
           (MarathiReceiptRasterizer.safeLeftMargin + MarathiReceiptRasterizer.safeContentWidth);
       expect(rightMargin, equals(64.0));
+    });
+
+    test('7. Renders Marathi Monthly Pass Slip image with 384px width', () async {
+      final samplePass = MonthlyPassModel(
+        id: 'pass-test-1',
+        passNumber: 'MP-2026-0001',
+        vehicleNumber: 'MH14AA1111',
+        normalizedVehicleNumber: 'MH14AA1111',
+        vehicleType: VehicleType.fourWheeler,
+        customerName: 'Rahul Patil',
+        customerMobile: '9876543210',
+        startDate: DateTime(2026, 10, 1),
+        endDate: DateTime(2026, 10, 31),
+        amount: 600.0,
+        amountPaid: 600.0,
+        paymentStatus: 'PAID',
+        paymentMethod: 'cash',
+        createdAt: DateTime(2026, 10, 1),
+        createdBy: 'Admin',
+      );
+
+      final passImg = await MarathiReceiptRasterizer.renderMonthlyPassSlip(samplePass);
+      expect(passImg.width, equals(384));
+      expect(passImg.height, greaterThan(250));
+
+      final profile = await CapabilityProfile.load();
+      final generator = Generator(PaperSize.mm58, profile);
+      final bytes = generator.imageRaster(passImg);
+      expect(bytes, isNotEmpty);
     });
   });
 }

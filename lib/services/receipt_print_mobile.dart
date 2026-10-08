@@ -8,6 +8,7 @@ import '../core/config/business_profile.dart';
 import '../core/localization/app_language.dart';
 import '../core/localization/app_language_controller.dart';
 import '../core/utils/formatters.dart';
+import '../models/monthly_pass_model.dart';
 import '../models/parking_record_model.dart';
 import 'marathi_receipt_rasterizer.dart';
 
@@ -281,6 +282,39 @@ class ReceiptPlatformPrinter {
       }
     } catch (e, stack) {
       debugPrint('[MPT-II Printer] [PRINT EXIT EXCEPTION] Print error: $e\n$stack');
+      lastErrorMessage = 'Print failed: $e';
+      return false;
+    }
+  }
+
+  /// Generates and prints the 58 mm thermal Monthly Pass to MPT-II via Bluetooth.
+  static Future<bool> printMonthlyPassReceipt(MonthlyPassModel pass, [String? htmlFallback]) async {
+    lastPrintedHtml = htmlFallback;
+    if (!Platform.isAndroid) {
+      return shouldSucceed;
+    }
+
+    debugPrint('[MPT-II Printer] [PRINT PASS] Preparing monthly pass slip for ${pass.passNumber}');
+    final connected = await ensureConnected();
+    if (!connected) {
+      debugPrint('[MPT-II Printer] [PRINT PASS FAILED] Printer not connected: ${lastErrorMessage ?? 'Unknown'}');
+      return false;
+    }
+
+    try {
+      final bytes = await _buildMonthlyPassEscPosBytes(pass);
+      debugPrint('[MPT-II Printer] [WRITE BYTES] Transmitting ${bytes.length} ESC/POS bytes to printer...');
+      final sent = await PrintBluetoothThermal.writeBytes(bytes);
+      if (sent) {
+        debugPrint('[MPT-II Printer] [PRINT PASS SUCCESS] ${bytes.length} bytes transmitted successfully');
+        return true;
+      } else {
+        lastErrorMessage = 'Failed to write bytes to thermal printer.';
+        debugPrint('[MPT-II Printer] [PRINT PASS FAILED] writeBytes returned false');
+        return false;
+      }
+    } catch (e, stack) {
+      debugPrint('[MPT-II Printer] [PRINT PASS EXCEPTION] Print error: $e\n$stack');
       lastErrorMessage = 'Print failed: $e';
       return false;
     }
@@ -644,6 +678,115 @@ class ReceiptPlatformPrinter {
       bytes.addAll(generator.text('Powered by', styles: const PosStyles(align: PosAlign.center)));
       bytes.addAll(generator.text('BIZFLOW', styles: const PosStyles(align: PosAlign.center, bold: true)));
       bytes.addAll(generator.text('Parking Management System', styles: const PosStyles(align: PosAlign.center)));
+    }
+
+    bytes.addAll(generator.feed(3));
+    bytes.addAll(generator.cut());
+
+    return bytes;
+  }
+
+  /// Builds ESC/POS commands for the 58 mm Monthly Pass Receipt.
+  static Future<List<int>> _buildMonthlyPassEscPosBytes(MonthlyPassModel pass) async {
+    final profile = await CapabilityProfile.load();
+    final generator = Generator(PaperSize.mm58, profile);
+    final bytes = <int>[];
+
+    final bProfile = BusinessProfileController.instance.profile;
+    final effectiveLang = AppLanguageController.instance.currentLanguage;
+
+    if (effectiveLang == AppLanguage.marathi) {
+      final passImg = await MarathiReceiptRasterizer.renderMonthlyPassSlip(pass, profile: bProfile);
+      bytes.addAll(generator.imageRaster(passImg));
+      if (bProfile.bizflowBrandingEnabled) {
+        final footerImg = await MarathiReceiptRasterizer.renderBizFlowFooter(language: AppLanguage.marathi);
+        bytes.addAll(generator.imageRaster(footerImg));
+      }
+      bytes.addAll(generator.feed(3));
+      bytes.addAll(generator.cut());
+      return bytes;
+    }
+
+    final normalizedVehicleNumber = AppFormatters.normalizeVehicleNumber(pass.vehicleNumber);
+    final vehicleType = pass.vehicleType.displayName;
+    final startDateStr = AppFormatters.formatDate(pass.startDate);
+    final endDateStr = AppFormatters.formatDate(pass.endDate);
+
+    // Header
+    bytes.addAll(generator.text(
+      bProfile.englishName,
+      styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2),
+    ));
+    bytes.addAll(generator.text(
+      bProfile.englishLocation,
+      styles: const PosStyles(align: PosAlign.center, bold: true),
+    ));
+    bytes.addAll(generator.text(
+      'Mo. ${bProfile.mobile}',
+      styles: const PosStyles(align: PosAlign.center),
+    ));
+    bytes.addAll(generator.text(
+      'CAR PARKING SYSTEM',
+      styles: const PosStyles(align: PosAlign.center, bold: true),
+    ));
+    bytes.addAll(generator.text(
+      'MONTHLY PASS',
+      styles: const PosStyles(align: PosAlign.center, bold: true),
+    ));
+    bytes.addAll(generator.hr());
+
+    bytes.addAll(generator.text(
+      'PASS NO: ${pass.passNumber}',
+      styles: const PosStyles(align: PosAlign.center, bold: true),
+    ));
+    bytes.addAll(generator.hr());
+
+    // Vehicle Details (Prominent Box)
+    bytes.addAll(generator.text(
+      'VEHICLE NUMBER',
+      styles: const PosStyles(align: PosAlign.center, bold: true),
+    ));
+    bytes.addAll(generator.text(
+      normalizedVehicleNumber,
+      styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2),
+    ));
+    bytes.addAll(generator.text(
+      'Type: $vehicleType',
+      styles: const PosStyles(align: PosAlign.center),
+    ));
+    bytes.addAll(generator.hr());
+
+    // Details Rows
+    _addEscPosRow(bytes, generator, 'Customer:', pass.customerName);
+    _addEscPosRow(bytes, generator, 'Mobile:', pass.customerMobile);
+    _addEscPosRow(bytes, generator, 'Validity:', '$startDateStr - $endDateStr');
+    bytes.addAll(generator.hr());
+
+    // Amount & Payment Status
+    bytes.addAll(generator.text(
+      'PASS AMOUNT',
+      styles: const PosStyles(align: PosAlign.center, bold: true),
+    ));
+    bytes.addAll(generator.text(
+      'Rs.${pass.amount.toInt()}',
+      styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2),
+    ));
+    _addEscPosRow(bytes, generator, 'Payment:', 'PAID (${pass.paymentMethod.toUpperCase()})');
+    _addEscPosRow(bytes, generator, 'Fee in Validity:', 'Rs.0');
+    bytes.addAll(generator.hr());
+
+    // Footer
+    bytes.addAll(generator.text(
+      'Thank You!',
+      styles: const PosStyles(align: PosAlign.center, bold: true),
+    ));
+
+    // BizFlow Branding Footer (if enabled)
+    if (bProfile.bizflowBrandingEnabled) {
+      bytes.addAll(generator.hr());
+      bytes.addAll(generator.text('Powered by', styles: const PosStyles(align: PosAlign.center)));
+      bytes.addAll(generator.text('BIZFLOW', styles: const PosStyles(align: PosAlign.center, bold: true)));
+      bytes.addAll(generator.text('CAR PARKING SYSTEM', styles: const PosStyles(align: PosAlign.center)));
     }
 
     bytes.addAll(generator.feed(3));

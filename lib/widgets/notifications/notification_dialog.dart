@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/localization/app_language_controller.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/formatters.dart';
@@ -52,13 +53,13 @@ class _NotificationDialogState extends State<NotificationDialog> {
       case 'upi':
         return AppStrings.upi;
       case 'handover':
-        return 'Handover';
+        return AppStrings.handover;
       case 'withdrawal':
-        return 'Withdrawal';
+        return AppStrings.withdrawal;
       case 'security':
-        return 'Security';
+        return AppStrings.security;
       case 'system':
-        return 'System';
+        return AppStrings.systemCategory;
       default:
         return cat.toUpperCase();
     }
@@ -66,20 +67,23 @@ class _NotificationDialogState extends State<NotificationDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.85,
-      ),
-      padding: EdgeInsets.only(
-        top: 20,
-        left: 16,
-        right: 16,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    return ListenableBuilder(
+      listenable: AppLanguageController.instance,
+      builder: (context, _) {
+        return Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          padding: EdgeInsets.only(
+            top: 20,
+            left: 16,
+            right: 16,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
           // Header with icon, title, unread count, and Mark All Read
           StreamBuilder<int>(
             stream: _service.watchUnreadCount(widget.userId),
@@ -152,7 +156,7 @@ class _NotificationDialogState extends State<NotificationDialog> {
           TextField(
             controller: _searchController,
             decoration: InputDecoration(
-              hintText: 'Search notifications...',
+              hintText: AppStrings.searchNotifications,
               prefixIcon: const Icon(Icons.search, size: 18),
               suffixIcon: _searchQuery.isNotEmpty
                   ? IconButton(
@@ -229,7 +233,7 @@ class _NotificationDialogState extends State<NotificationDialog> {
                 final notifications = rawList.where((item) {
                   if (_selectedCategory != 'all') {
                     final t = item.type.toLowerCase();
-                    final text = '${item.title} ${item.message}'.toLowerCase();
+                    final text = '${item.title} ${item.message} ${item.localizedTitle} ${item.localizedMessage}'.toLowerCase();
                     switch (_selectedCategory) {
                       case 'shift':
                         if (!t.contains('shift')) return false;
@@ -247,7 +251,7 @@ class _NotificationDialogState extends State<NotificationDialog> {
                         if (!t.contains('withdrawal') && !text.contains('withdrawal') && !text.contains('काढणे')) return false;
                         break;
                       case 'security':
-                        if (!t.contains('security') && !t.contains('blocked') && !t.contains('conflict') && !text.contains('security')) return false;
+                        if (!t.contains('security') && !t.contains('blocked') && !t.contains('conflict') && !text.contains('security') && !text.contains('सुरक्षा')) return false;
                         break;
                       case 'system':
                         if (t != 'system' && t != 'capacity' && t != 'pass_expiry') return false;
@@ -256,7 +260,7 @@ class _NotificationDialogState extends State<NotificationDialog> {
                   }
 
                   if (_searchQuery.isNotEmpty) {
-                    final text = '${item.title} ${item.message}'.toLowerCase();
+                    final text = '${item.title} ${item.message} ${item.localizedTitle} ${item.localizedMessage}'.toLowerCase();
                     if (!text.contains(_searchQuery)) return false;
                   }
 
@@ -308,7 +312,9 @@ class _NotificationDialogState extends State<NotificationDialog> {
             ),
           ),
         ],
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -330,7 +336,7 @@ class _NotificationDialogState extends State<NotificationDialog> {
   Widget _buildNotificationTile(NotificationModel item) {
     IconData iconData = Icons.info_outline;
     Color iconColor = AppColors.primary;
-    String categoryTag = 'SYSTEM';
+    String categoryTag = item.localizedCategory.toUpperCase();
 
     final t = item.type.toLowerCase();
     final text = '${item.title} ${item.message}'.toLowerCase();
@@ -338,27 +344,21 @@ class _NotificationDialogState extends State<NotificationDialog> {
     if (t.contains('shift')) {
       iconData = Icons.schedule_outlined;
       iconColor = AppColors.primary;
-      categoryTag = 'SHIFT';
     } else if (t.contains('handover') || text.contains('handover') || text.contains('हस्तांतरण')) {
       iconData = Icons.swap_horiz;
       iconColor = AppColors.warningDark;
-      categoryTag = 'HANDOVER';
     } else if (t.contains('withdrawal') || text.contains('withdrawal') || text.contains('काढणे')) {
       iconData = Icons.account_balance;
       iconColor = AppColors.secondary;
-      categoryTag = 'WITHDRAWAL';
     } else if (t.contains('cash') || text.contains('cash') || text.contains('रोख')) {
       iconData = Icons.money;
       iconColor = AppColors.cashColor;
-      categoryTag = 'CASH';
     } else if (t.contains('upi') || text.contains('upi')) {
       iconData = Icons.qr_code_2;
       iconColor = AppColors.upiColor;
-      categoryTag = 'UPI';
-    } else if (t.contains('security') || t.contains('blocked') || t.contains('conflict') || text.contains('security')) {
+    } else if (t.contains('security') || t.contains('blocked') || t.contains('conflict') || text.contains('security') || text.contains('सुरक्षा')) {
       iconData = Icons.security;
       iconColor = AppColors.danger;
-      categoryTag = 'SECURITY';
     }
 
     return InkWell(
@@ -407,7 +407,7 @@ class _NotificationDialogState extends State<NotificationDialog> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          item.title,
+                          item.localizedTitle,
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: item.isRead ? FontWeight.w600 : FontWeight.w700,
@@ -428,7 +428,7 @@ class _NotificationDialogState extends State<NotificationDialog> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    item.message,
+                    item.localizedMessage,
                     style: TextStyle(
                       fontSize: 12,
                       color: item.isRead ? AppColors.textSecondary : AppColors.textPrimary,
@@ -449,9 +449,9 @@ class _NotificationDialogState extends State<NotificationDialog> {
                       if (!item.isRead)
                         InkWell(
                           onTap: () => _service.markAsRead(item.notificationId),
-                          child: const Text(
-                            'Mark Read',
-                            style: TextStyle(fontSize: 10, color: AppColors.primary, fontWeight: FontWeight.bold),
+                          child: Text(
+                            AppStrings.markAsRead,
+                            style: const TextStyle(fontSize: 10, color: AppColors.primary, fontWeight: FontWeight.bold),
                           ),
                         ),
                     ],
