@@ -839,7 +839,7 @@ class _AdminShiftManagementScreenState extends State<AdminShiftManagementScreen>
                 Expanded(
                   child: _buildTimeItem(
                     label: AppStrings.duration,
-                    value: '${schedule.durationHours} Hours',
+                    value: AppStrings.formatShiftDuration(schedule.durationHours),
                   ),
                 ),
                 Expanded(
@@ -1073,7 +1073,7 @@ class _AdminShiftManagementScreenState extends State<AdminShiftManagementScreen>
                 Expanded(
                   child: _buildTimeItem(
                     label: AppStrings.duration,
-                    value: '${shift.durationHours} Hours',
+                    value: AppStrings.formatShiftDuration(shift.durationHours),
                   ),
                 ),
               ],
@@ -1195,14 +1195,16 @@ class _ShiftFormSheetState extends State<_ShiftFormSheet> {
   void initState() {
     super.initState();
     final settings = SettingsService.instance.currentSettings;
-    _allowedDurations = settings.allowedShiftDurations.isNotEmpty
-        ? settings.allowedShiftDurations
-        : const [8, 9, 10];
+    _allowedDurations = List<int>.from(ShiftModel.allowedShiftDurations);
     if (widget.shiftToEdit != null) {
       final s = widget.shiftToEdit!;
       _selectedDate = s.shiftDate;
       _selectedStartTime = TimeOfDay(hour: s.startTime.hour, minute: s.startTime.minute);
       _durationHours = s.durationHours;
+      if (!_allowedDurations.contains(_durationHours)) {
+        _allowedDurations = List<int>.from(_allowedDurations)..add(_durationHours);
+        _allowedDurations.sort();
+      }
     } else {
       _durationHours = settings.defaultShiftDurationHours;
       if (!_allowedDurations.contains(_durationHours)) {
@@ -1670,29 +1672,64 @@ class _ShiftFormSheetState extends State<_ShiftFormSheet> {
             const SizedBox(height: 14),
 
             // Shift Duration Selection
-            const Text('Shift Duration', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              children: _allowedDurations.map((hrs) {
-                final isSelected = _durationHours == hrs;
-                return ChoiceChip(
-                  label: Text('$hrs Hours', style: TextStyle(
-                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                    color: isSelected ? Colors.white : AppColors.textPrimary,
-                  )),
-                  selected: isSelected,
-                  selectedColor: AppColors.primary,
-                  backgroundColor: AppColors.surface,
-                  onSelected: (selected) {
-                    if (selected) {
-                      setState(() {
-                        _durationHours = hrs;
-                      });
+            Text(AppStrings.shiftDuration, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isMobile = constraints.maxWidth < 500;
+                final durations = _allowedDurations;
+                if (isMobile && durations.length == 4) {
+                  return Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(child: _buildDurationButton(durations[0])),
+                          const SizedBox(width: 10),
+                          Expanded(child: _buildDurationButton(durations[1])),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(child: _buildDurationButton(durations[2])),
+                          const SizedBox(width: 10),
+                          Expanded(child: _buildDurationButton(durations[3])),
+                        ],
+                      ),
+                    ],
+                  );
+                } else if (isMobile) {
+                  final rows = <Widget>[];
+                  for (var i = 0; i < durations.length; i += 2) {
+                    final hasNext = i + 1 < durations.length;
+                    rows.add(
+                      Row(
+                        children: [
+                          Expanded(child: _buildDurationButton(durations[i])),
+                          const SizedBox(width: 10),
+                          if (hasNext)
+                            Expanded(child: _buildDurationButton(durations[i + 1]))
+                          else
+                            const Spacer(),
+                        ],
+                      ),
+                    );
+                    if (i + 2 < durations.length) {
+                      rows.add(const SizedBox(height: 10));
                     }
-                  },
-                );
-              }).toList(),
+                  }
+                  return Column(children: rows);
+                } else {
+                  return Row(
+                    children: [
+                      for (int i = 0; i < durations.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 10),
+                        Expanded(child: _buildDurationButton(durations[i])),
+                      ],
+                    ],
+                  );
+                }
+              },
             ),
             const SizedBox(height: 14),
 
@@ -1754,7 +1791,7 @@ class _ShiftFormSheetState extends State<_ShiftFormSheet> {
                         style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                       ),
                       Text(
-                        '$_durationHours Hours',
+                        AppStrings.formatShiftDuration(_durationHours),
                         style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
                       ),
                     ],
@@ -1786,6 +1823,43 @@ class _ShiftFormSheetState extends State<_ShiftFormSheet> {
               onPressed: _handleSave,
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDurationButton(int hrs) {
+    final isSelected = _durationHours == hrs;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _durationHours = hrs;
+          });
+        },
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 46, minWidth: 44),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.primary : AppColors.surface,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected ? AppColors.primary : AppColors.border,
+              width: isSelected ? 1.5 : 1.0,
+            ),
+          ),
+          child: Text(
+            AppStrings.formatShiftDuration(hrs),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+              color: isSelected ? Colors.white : AppColors.textPrimary,
+            ),
+          ),
         ),
       ),
     );

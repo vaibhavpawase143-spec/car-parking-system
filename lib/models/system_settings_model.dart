@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../core/constants/app_constants.dart';
+import 'shift_model.dart';
 
 /// Holds all dynamic operational parameters, vehicle rate charts,
 /// slot capacities, and business profile metadata.
@@ -52,8 +53,8 @@ class SystemSettingsModel {
     this.mobile = '9690793434',
     this.marathiMobile = '९६९०७९३४३४',
     this.bizflowBrandingEnabled = true,
-    this.defaultShiftDurationHours = 8,
-    this.allowedShiftDurations = const [8, 9, 10],
+    this.defaultShiftDurationHours = ShiftModel.standardDurationHours,
+    this.allowedShiftDurations = ShiftModel.allowedShiftDurations,
     this.cashEnabled = true,
     this.upiEnabled = true,
     this.advanceEnabled = true,
@@ -70,9 +71,12 @@ class SystemSettingsModel {
 
   factory SystemSettingsModel.fromMap(Map<String, dynamic> data) {
     final rawAllowed = data['allowedShiftDurations'];
-    List<int> parsedAllowed = [8, 9, 10];
+    List<int> parsedAllowed = List<int>.from(ShiftModel.allowedShiftDurations);
     if (rawAllowed is List) {
-      final list = rawAllowed.map((e) => (e as num).toInt()).toList();
+      final list = rawAllowed
+          .map((e) => (e as num).toInt())
+          .where((e) => ShiftModel.allowedShiftDurations.contains(e))
+          .toList();
       if (list.isNotEmpty) parsedAllowed = list;
     }
 

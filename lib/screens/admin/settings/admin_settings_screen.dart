@@ -3,6 +3,7 @@ import '../../../core/localization/app_language_controller.dart';
 import '../../../core/localization/app_strings.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../models/shift_model.dart';
 import '../../../models/system_settings_model.dart';
 import '../../../services/settings_service.dart';
 import '../../../widgets/common/app_button.dart';
@@ -48,7 +49,15 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     final mrMobileController = TextEditingController(text: current.marathiMobile);
 
     int selectedDefaultDuration = current.defaultShiftDurationHours;
-    List<int> selectedAllowedDurations = List<int>.from(current.allowedShiftDurations);
+    List<int> selectedAllowedDurations = List<int>.from(
+      current.allowedShiftDurations.where((d) => ShiftModel.allowedShiftDurations.contains(d)),
+    );
+    if (selectedAllowedDurations.isEmpty) {
+      selectedAllowedDurations = List<int>.from(ShiftModel.allowedShiftDurations);
+    }
+    if (!selectedAllowedDurations.contains(selectedDefaultDuration)) {
+      selectedDefaultDuration = selectedAllowedDurations.first;
+    }
     bool cashEnabled = current.cashEnabled;
     bool upiEnabled = current.upiEnabled;
     bool advanceEnabled = current.advanceEnabled;
@@ -158,10 +167,10 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                         const SizedBox(height: 6),
                         Wrap(
                           spacing: 8,
-                          children: [8, 9, 10].map((hrs) {
+                          children: ShiftModel.allowedShiftDurations.map((hrs) {
                             final isAllowed = selectedAllowedDurations.contains(hrs);
                             return FilterChip(
-                              label: Text('$hrs ${AppStrings.hours}'),
+                              label: Text(AppStrings.formatShiftDuration(hrs)),
                               selected: isAllowed,
                               selectedColor: AppColors.primaryLight.withValues(alpha: 0.3),
                               onSelected: (val) {

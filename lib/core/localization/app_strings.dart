@@ -629,6 +629,22 @@ class AppStrings {
   static String get details => _isMarathi ? 'तपशील' : 'Details';
   static String get period => _isMarathi ? 'कालावधी' : 'Period';
   static String get hours => _isMarathi ? 'तास' : 'Hours';
+  static String get hours8 => _isMarathi ? '८ तास' : '8 Hours';
+  static String get hours10 => _isMarathi ? '१० तास' : '10 Hours';
+  static String get hours12 => _isMarathi ? '१२ तास' : '12 Hours';
+  static String get hours24 => _isMarathi ? '२४ तास' : '24 Hours';
+
+  static String formatShiftDuration(int hours) {
+    if (_isMarathi) {
+      const marathiDigits = {
+        '0': '०', '1': '१', '2': '२', '3': '३', '4': '४',
+        '5': '५', '6': '६', '7': '७', '8': '८', '9': '९',
+      };
+      final hoursStr = hours.toString().split('').map((c) => marathiDigits[c] ?? c).join('');
+      return '$hoursStr तास';
+    }
+    return '$hours Hours';
+  }
   static String get durationLongestFirst => _isMarathi ? 'कालावधी (दीर्घकाळ प्रथम)' : 'Duration (Longest First)';
   static String get noShiftsToday => _isMarathi ? 'आज कोणतीही पाळी नियोजित नाही.' : 'No shifts scheduled for today.';
   static String get noActiveShifts => _isMarathi ? 'या क्षणी कोणतीही सक्रिय पाळी नाही.' : 'No active shifts at this moment.';

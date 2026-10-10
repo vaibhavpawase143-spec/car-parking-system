@@ -24,19 +24,8 @@ void main() {
       expect(shift.endTime.difference(shift.startTime).inHours, 8);
     });
 
-    test('9-hour and 10-hour duration calculations', () {
+    test('10-hour, 12-hour, and 24-hour duration calculations', () {
       final sTime = DateTime(2026, 10, 1, 8, 0);
-
-      final shift9 = ShiftModel.createShiftWithDuration(
-        shiftId: 'shift_9h',
-        guardId: 'guard_a',
-        guardName: 'Guard A',
-        shiftDate: DateTime(2026, 10, 1),
-        startTime: sTime,
-        durationHours: 9,
-      );
-      expect(shift9.durationHours, 9);
-      expect(shift9.endTime, DateTime(2026, 10, 1, 17, 0));
 
       final shift10 = ShiftModel.createShiftWithDuration(
         shiftId: 'shift_10h',
@@ -48,6 +37,29 @@ void main() {
       );
       expect(shift10.durationHours, 10);
       expect(shift10.endTime, DateTime(2026, 10, 1, 18, 0));
+
+      final shift12 = ShiftModel.createShiftWithDuration(
+        shiftId: 'shift_12h',
+        guardId: 'guard_a',
+        guardName: 'Guard A',
+        shiftDate: DateTime(2026, 10, 1),
+        startTime: sTime,
+        durationHours: 12,
+      );
+      expect(shift12.durationHours, 12);
+      expect(shift12.endTime, DateTime(2026, 10, 1, 20, 0));
+
+      final shift24 = ShiftModel.createShiftWithDuration(
+        shiftId: 'shift_24h',
+        guardId: 'guard_a',
+        guardName: 'Guard A',
+        shiftDate: DateTime(2026, 10, 1),
+        startTime: sTime,
+        durationHours: 24,
+      );
+      expect(shift24.durationHours, 24);
+      expect(shift24.endTime, DateTime(2026, 10, 2, 8, 0)); // Next day 08:00 AM
+      expect(shift24.endTime.difference(shift24.startTime).inHours, 24);
     });
 
     test('Midnight crossing: 10:00 PM to 06:00 AM next day', () {

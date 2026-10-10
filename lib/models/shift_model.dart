@@ -24,6 +24,7 @@ enum ShiftStatus {
 /// Authoritative Shift Model representing an Admin-scheduled fixed 8-hour shift.
 class ShiftModel {
   static const int standardDurationHours = 8;
+  static const List<int> allowedShiftDurations = [8, 10, 12, 24];
 
   final String shiftId;
   final String? scheduleId;
@@ -265,8 +266,8 @@ class ShiftModel {
     if (data['endTime'] != null) {
       final parsedEndTime = parseDateTime(data['endTime'], eTime);
       final diffHours = parsedEndTime.difference(sTime).inHours;
-      // Accept custom stored endTime only if it is forward in time and within valid shift duration bounds (6 to 14 hours)
-      if (parsedEndTime.isAfter(sTime) && diffHours >= 6 && diffHours <= 14) {
+      // Accept custom stored endTime only if it is forward in time and within valid shift duration bounds (6 to 26 hours)
+      if (parsedEndTime.isAfter(sTime) && diffHours >= 6 && diffHours <= 26) {
         eTime = parsedEndTime;
       }
     }
