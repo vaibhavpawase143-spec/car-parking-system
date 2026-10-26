@@ -247,6 +247,54 @@ class AppStrings {
   static String get printSuccessNotice => _isMarathi ? 'पावती यशस्वीरित्या प्रिंट झाली!' : 'Receipt printed successfully!';
 
   // ---------------------------------------------------------------------------
+  // VEHICLE ENTRY — HORIZONTAL SPLIT, SCANNING & CONFIRMATION
+  // ---------------------------------------------------------------------------
+  static String get cameraScanningTitle => _isMarathi ? 'कॅमेरा व स्कॅनिंग' : 'Camera & Scanning';
+  static String get entryFormTitle => _isMarathi ? 'वाहन प्रवेश फॉर्म' : 'Entry Form';
+  static String get numberPlate => _isMarathi ? 'नंबर प्लेट' : 'Number Plate';
+  static String get scanOcrPlate => _isMarathi ? 'नंबर प्लेट OCR स्कॅन' : 'Scan Plate (OCR)';
+  static String get numberPlateFramingGuide => _isMarathi ? 'नंबर प्लेट फ्रेममध्ये ठेवा' : 'Align number plate within the frame';
+  static String get scanningForQrAndPlate => _isMarathi ? 'QR कोड व नंबर प्लेट स्कॅन करत आहे...' : 'Scanning for QR Code & Number Plate...';
+  static String get liveOcrActive => _isMarathi ? 'थेट OCR चालू आहे: नंबर प्लेट फ्रेममध्ये धरा' : 'Live OCR Active: Align plate in frame';
+  static String get verifyingStability => _isMarathi ? 'नंबर प्लेट स्थैर्य तपासत आहे...' : 'Verifying plate stability...';
+  static String get liveOcrUnsupportedNotice => _isMarathi ? 'थेट कॅमेरा OCR फक्त Android आणि iOS वर उपलब्ध आहे.' : 'Live camera OCR is supported on Android and iOS devices.';
+  static String get scanningActive => _isMarathi ? 'स्कॅनिंग चालू आहे' : 'Scanning Active';
+  static String get plateDetectedHighConfidence => _isMarathi ? 'नंबर प्लेट आढळली (उच्च अचूकता)' : 'Plate Detected (High Confidence)';
+  static String get plateDetectedLowConfidence => _isMarathi ? 'नंबर प्लेट अचूकता कमी आहे' : 'Plate Detection (Low Confidence)';
+  static String get lowConfidenceWarning => _isMarathi ? 'नंबर प्लेट अचूकता कमी आहे. कृपया पुन्हा स्कॅन करा किंवा हाताने नोंदवा.' : 'Plate detection confidence low. Please rescan or enter manually.';
+  static String get qrOcrConflictTitle => _isMarathi ? 'QR व OCR मध्ये तफावत आढळली!' : 'QR & OCR Mismatch Detected!';
+  static String get qrOcrConflictDesc => _isMarathi ? 'QR आणि स्कॅन केलेल्या नंबर प्लेटमध्ये तफावत आहे. कृपया योग्य नंबर निवडा किंवा दुरुस्त करा:' : 'Conflict detected between QR and OCR plate readings. Please select or correct the number:';
+  static String get useQrValue => _isMarathi ? 'QR मूल्य वापरा' : 'Use QR Value';
+  static String get useOcrValue => _isMarathi ? 'OCR मूल्य वापरा' : 'Use OCR Value';
+  static String get confirmPlate => _isMarathi ? 'नंबर प्लेट पुष्टी करा' : 'Confirm Plate';
+  static String get plateConfirmed => _isMarathi ? 'नंबर प्लेट पुष्टी झाली ✓' : 'Plate Confirmed ✓';
+  static String get plateConfirmationRequired => _isMarathi ? 'नोंद जतन करण्यापूर्वी नंबर प्लेटची पुष्टी करणे आवश्यक आहे.' : 'Please confirm the number plate before saving entry.';
+  static String get numberPlatePhotoLabel => _isMarathi ? 'नंबर प्लेट फोटो' : 'Number Plate Photo';
+  static String get numberPlatePhotoRequired => _isMarathi ? 'नंबर प्लेट फोटो आवश्यक आहे' : 'Number plate photo is required';
+  static String get retakePlatePhoto => _isMarathi ? 'प्लेटचा फोटो पुन्हा काढा' : 'Retake Plate Photo';
+  static String get autoCapturedOnDetection => _isMarathi ? 'नंबर प्लेट आढळल्यावर आपोआप काढला' : 'Auto-captured on detection';
+  static String get vehiclePhotoOptionalLabel => _isMarathi ? 'वाहनाचा फोटो (पर्यायी)' : 'Vehicle Photo (Optional)';
+  static String get captureVehiclePhoto => _isMarathi ? 'वाहनाचा फोटो काढा' : 'Capture Vehicle Photo';
+  static String get retakeVehiclePhoto => _isMarathi ? 'वाहनाचा फोटो पुन्हा काढा' : 'Retake Vehicle Photo';
+  static String get vehiclePhotoCaptured => _isMarathi ? 'वाहनाचा फोटो जोडला आहे' : 'Vehicle photo attached';
+  static String get cameraPermissionDeniedTitle => _isMarathi ? 'कॅमेरा परवानगी नाकारली' : 'Camera Permission Denied';
+  static String get cameraPermissionDeniedDesc => _isMarathi ? 'कॅमेरा वापरण्याची परवानगी नाकारली आहे. तुम्ही हाताने नंबर टाकू शकता.' : 'Camera permission is required to scan plates. You can still enter details manually.';
+  static String get retryPermission => _isMarathi ? 'परवानगी पुन्हा मागा' : 'Retry Permission';
+  static String get rescan => _isMarathi ? 'पुन्हा स्कॅन करा' : 'Rescan';
+  static String get manualEntry => _isMarathi ? 'हाताने नोंदवा' : 'Manual Entry';
+  static String get saveEntryButton => _isMarathi ? 'प्रवेश जतन करा व पावती बनवा' : 'Save Entry & Generate Ticket';
+  static String get editPlateNumber => _isMarathi ? 'नंबर बदला' : 'Edit Plate';
+  static String get entryFormSettings => _isMarathi ? 'प्रवेश फॉर्म सेटिंग्ज' : 'Entry Form Settings';
+  static String get requireNumberPlateLabel => _isMarathi ? 'नंबर प्लेट अनिवार्य' : 'Require Number Plate';
+  static String get requireNumberPlateDesc => _isMarathi ? 'चालू असल्यास नंबर प्लेट अनिवार्य असेल' : 'When enabled, number plate is mandatory';
+  static String get requirePlatePhotoLabel => _isMarathi ? 'नंबर प्लेट फोटो अनिवार्य' : 'Require Plate Photo';
+  static String get requirePlatePhotoDesc => _isMarathi ? 'चालू असल्यास नंबर प्लेट फोटो अनिवार्य असेल' : 'When enabled, plate photo is mandatory';
+  static String get requireCustomerMobileLabel => _isMarathi ? 'मोबाईल नंबर अनिवार्य' : 'Require Customer Mobile';
+  static String get requireCustomerMobileDesc => _isMarathi ? 'चालू असल्यास ग्राहकाचा मोबाईल अनिवार्य असेल' : 'When enabled, customer mobile is mandatory';
+  static String get vehiclePhotoVisibleLabel => _isMarathi ? 'वाहनाचा फोटो पर्याय दाखवा' : 'Show Optional Vehicle Photo';
+  static String get vehiclePhotoVisibleDesc => _isMarathi ? 'प्रवेश फॉर्ममध्ये पर्यायी वाहनाचा फोटो पर्याय दाखवतो' : 'Shows optional vehicle photo picker in entry form';
+
+  // ---------------------------------------------------------------------------
   // ACTIVE PARKING DIRECTORY
   // ---------------------------------------------------------------------------
   static String get activeParking => _isMarathi ? 'सक्रिय पार्किंग' : 'Active Parking';

@@ -62,6 +62,10 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     bool upiEnabled = current.upiEnabled;
     bool advanceEnabled = current.advanceEnabled;
     bool singleActiveDeviceEnabled = current.singleActiveDeviceEnabled;
+    bool requireNumberPlate = current.requireNumberPlate;
+    bool requirePlatePhoto = current.requirePlatePhoto;
+    bool vehiclePhotoVisible = current.vehiclePhotoVisible;
+    bool requireCustomerMobile = current.requireCustomerMobile;
 
     bool isSaving = false;
 
@@ -258,6 +262,55 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                             value: singleActiveDeviceEnabled,
                             activeThumbColor: AppColors.primary,
                             onChanged: (v) => setModalState(() => singleActiveDeviceEnabled = v),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+
+                        // Section: Entry Form Settings
+                        Text(AppStrings.entryFormSettings, style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary)),
+                        const SizedBox(height: 8),
+                        Material(
+                          color: Colors.transparent,
+                          child: SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(AppStrings.requireNumberPlateLabel, style: const TextStyle(fontSize: 14)),
+                            subtitle: Text(AppStrings.requireNumberPlateDesc, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                            value: requireNumberPlate,
+                            activeThumbColor: AppColors.primary,
+                            onChanged: (v) => setModalState(() => requireNumberPlate = v),
+                          ),
+                        ),
+                        Material(
+                          color: Colors.transparent,
+                          child: SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(AppStrings.requirePlatePhotoLabel, style: const TextStyle(fontSize: 14)),
+                            subtitle: Text(AppStrings.requirePlatePhotoDesc, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                            value: requirePlatePhoto,
+                            activeThumbColor: AppColors.primary,
+                            onChanged: (v) => setModalState(() => requirePlatePhoto = v),
+                          ),
+                        ),
+                        Material(
+                          color: Colors.transparent,
+                          child: SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(AppStrings.vehiclePhotoVisibleLabel, style: const TextStyle(fontSize: 14)),
+                            subtitle: Text(AppStrings.vehiclePhotoVisibleDesc, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                            value: vehiclePhotoVisible,
+                            activeThumbColor: AppColors.primary,
+                            onChanged: (v) => setModalState(() => vehiclePhotoVisible = v),
+                          ),
+                        ),
+                        Material(
+                          color: Colors.transparent,
+                          child: SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(AppStrings.requireCustomerMobileLabel, style: const TextStyle(fontSize: 14)),
+                            subtitle: Text(AppStrings.requireCustomerMobileDesc, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                            value: requireCustomerMobile,
+                            activeThumbColor: AppColors.primary,
+                            onChanged: (v) => setModalState(() => requireCustomerMobile = v),
                           ),
                         ),
                         const SizedBox(height: 18),
@@ -461,6 +514,10 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                                             upiEnabled: upiEnabled,
                                             advanceEnabled: advanceEnabled,
                                             singleActiveDeviceEnabled: singleActiveDeviceEnabled,
+                                            requireNumberPlate: requireNumberPlate,
+                                            requirePlatePhoto: requirePlatePhoto,
+                                            vehiclePhotoVisible: vehiclePhotoVisible,
+                                            requireCustomerMobile: requireCustomerMobile,
                                           );
 
                                           await _settingsService.saveSettings(
@@ -824,6 +881,46 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                       _buildSettingRow(
                         AppStrings.advanceFeeEnabled,
                         settings.advanceEnabled ? AppStrings.enabled : AppStrings.disabled,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // Entry Form Configuration Card
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.assignment, color: AppColors.primary, size: 22),
+                          const SizedBox(width: 8),
+                          Text(
+                            AppStrings.entryFormSettings,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                        ],
+                      ),
+                      const Divider(height: 24),
+                      _buildSettingRow(
+                        AppStrings.requireNumberPlateLabel,
+                        settings.requireNumberPlate ? AppStrings.enabled : AppStrings.disabled,
+                      ),
+                      const SizedBox(height: 12),
+                      _buildSettingRow(
+                        AppStrings.requirePlatePhotoLabel,
+                        settings.requirePlatePhoto ? AppStrings.enabled : AppStrings.disabled,
+                      ),
+                      const SizedBox(height: 12),
+                      _buildSettingRow(
+                        AppStrings.vehiclePhotoVisibleLabel,
+                        settings.vehiclePhotoVisible ? AppStrings.enabled : AppStrings.disabled,
+                      ),
+                      const SizedBox(height: 12),
+                      _buildSettingRow(
+                        AppStrings.requireCustomerMobileLabel,
+                        settings.requireCustomerMobile ? AppStrings.enabled : AppStrings.disabled,
                       ),
                     ],
                   ),

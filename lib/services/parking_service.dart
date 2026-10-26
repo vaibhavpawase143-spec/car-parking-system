@@ -7,6 +7,7 @@ import '../core/utils/formatters.dart';
 import '../models/parking_record_model.dart';
 import '../models/vehicle_type.dart';
 import 'cloudinary_service.dart';
+import 'plate_scanner_service.dart';
 
 /// Thrown when a vehicle is already parked with an active ticket.
 class VehicleAlreadyParkedException implements Exception {
@@ -230,11 +231,12 @@ class ParkingService {
     });
   }
 
-  /// Executes vehicle entry with capacity check, duplicate check, Cloudinary photo upload, and atomic Firestore storage.
+  /// Executes vehicle entry with capacity check, duplicate check, photo upload, and atomic Firestore storage.
   Future<ParkingRecord> createVehicleEntry({
     required String vehicleNumber,
     required VehicleType vehicleType,
-    required Uint8List vehiclePhotoBytes,
+    Uint8List? vehiclePhotoBytes,
+    Uint8List? platePhotoBytes,
     required String customerMobile,
     required String guardUid,
     required String guardName,
@@ -245,17 +247,16 @@ class ParkingService {
     String? monthlyPassId,
   }) async {
     final cleanVehicleNumber = AppFormatters.normalizeVehicleNumber(vehicleNumber);
-
-    if (cleanVehicleNumber.isEmpty) {
-      throw ArgumentError('Vehicle number cannot be empty.');
-    }
+    final effectiveVehicleNumber = cleanVehicleNumber.isEmpty ? 'NO-PLATE' : cleanVehicleNumber;
 
     // Pass vehicle pays ₹0 advance
     final effectiveAdvance = isMonthlyPass ? 0.0 : advanceAmount;
 
-    // Execute duplicate and capacity checks concurrently to eliminate sequential network latency
+    // Execute duplicate and capacity checks concurrently
     final checkResults = await Future.wait([
-      isVehicleAlreadyParked(cleanVehicleNumber),
+      cleanVehicleNumber.isNotEmpty
+          ? isVehicleAlreadyParked(cleanVehicleNumber)
+          : Future.value(false),
       getAvailableCapacity(vehicleType),
     ]);
 
@@ -273,21 +274,61 @@ class ParkingService {
     final ticketId = await generateNextTicketNumber();
     final entryTime = DateTime.now();
 
-    // 1. Upload mandatory photo to Cloudinary first
-    final uploadResult = await uploadVehiclePhoto(
-      ticketId: ticketId,
-      imageBytes: vehiclePhotoBytes,
-    );
+    // Determine primary and secondary photo bytes (filter out any 1x1 placeholders)
+    final realPlatePhoto = (platePhotoBytes != null &&
+            platePhotoBytes.isNotEmpty &&
+            !PlateScannerService.isPlaceholder(platePhotoBytes))
+        ? platePhotoBytes
+        : null;
+    final realVehiclePhoto = (vehiclePhotoBytes != null &&
+            vehiclePhotoBytes.isNotEmpty &&
+            !PlateScannerService.isPlaceholder(vehiclePhotoBytes))
+        ? vehiclePhotoBytes
+        : null;
 
-    final photoUrl = uploadResult.secureUrl;
-    final photoPublicId = uploadResult.publicId;
+    final primaryBytes = realPlatePhoto ?? realVehiclePhoto;
+    final secondaryBytes = (realPlatePhoto != null && realVehiclePhoto != null)
+        ? realVehiclePhoto
+        : null;
+
+    String? photoUrl;
+    String? vehiclePhotoUrl;
+    String? photoPublicId;
+    String? photoDeleteToken;
+
+    if (primaryBytes != null && primaryBytes.isNotEmpty) {
+      try {
+        final uploadResult = await uploadVehiclePhoto(
+          ticketId: ticketId,
+          imageBytes: primaryBytes,
+        );
+        photoUrl = uploadResult.secureUrl;
+        vehiclePhotoUrl = uploadResult.secureUrl;
+        photoPublicId = uploadResult.publicId;
+        photoDeleteToken = uploadResult.deleteToken;
+      } catch (e) {
+        debugPrint('[ParkingService] Primary photo upload warning: $e');
+      }
+    }
+
+    if (secondaryBytes != null && secondaryBytes.isNotEmpty) {
+      try {
+        final secondaryUpload = await uploadVehiclePhoto(
+          ticketId: '${ticketId}_vehicle',
+          imageBytes: secondaryBytes,
+        );
+        vehiclePhotoUrl = secondaryUpload.secureUrl;
+      } catch (e) {
+        debugPrint('[ParkingService] Secondary photo upload warning: $e');
+      }
+    }
 
     try {
       final record = ParkingRecord(
         id: ticketId,
         ticketId: ticketId,
         ticketNumber: ticketId,
-        vehicleNumber: cleanVehicleNumber,
+        vehicleNumber: effectiveVehicleNumber,
         vehicleType: vehicleType,
         customerMobile: customerMobile.trim(),
         entryTime: entryTime,
@@ -302,9 +343,9 @@ class ParkingService {
         advanceCollectorGuardName: effectiveAdvance > 0 ? guardName : null,
         advanceCollectorShift: effectiveAdvance > 0 ? guardShift : null,
         photoUrl: photoUrl,
-        vehiclePhotoUrl: photoUrl,
+        vehiclePhotoUrl: vehiclePhotoUrl ?? photoUrl,
         photoPublicId: photoPublicId,
-        photoDeleteToken: uploadResult.deleteToken,
+        photoDeleteToken: photoDeleteToken,
         photoStorageProvider: 'cloudinary',
         qrReference: ticketId,
         isMonthlyPass: isMonthlyPass,
@@ -315,10 +356,10 @@ class ParkingService {
       final recordMap = record.toFirestore();
       recordMap['entryTime'] = Timestamp.fromDate(entryTime);
       recordMap['createdAt'] = Timestamp.fromDate(entryTime);
-      recordMap['vehiclePhotoUrl'] = photoUrl;
+      recordMap['vehiclePhotoUrl'] = vehiclePhotoUrl ?? photoUrl;
       recordMap['photoUrl'] = photoUrl;
       recordMap['photoPublicId'] = photoPublicId;
-      recordMap['photoDeleteToken'] = uploadResult.deleteToken;
+      recordMap['photoDeleteToken'] = photoDeleteToken;
       recordMap['photoStorageProvider'] = 'cloudinary';
       recordMap['updatedAt'] = FieldValue.serverTimestamp();
 

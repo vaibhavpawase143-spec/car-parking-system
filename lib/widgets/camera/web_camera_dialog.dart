@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:car_parking_system/core/theme/app_colors.dart';
 import 'package:flutter/material.dart';
@@ -9,20 +10,30 @@ import 'web_camera_stub.dart'
 /// Supports live camera preview, front/back camera switching, frame capture, preview, and selection.
 class WebCameraDialog extends StatefulWidget {
   final String? initialCameraId;
+  final bool isPlateScanning;
+  final Function(String plateNumber, Uint8List photoBytes)? onPlateDetected;
 
   const WebCameraDialog({
     super.key,
     this.initialCameraId,
+    this.isPlateScanning = false,
+    this.onPlateDetected,
   });
 
   static Future<Uint8List?> show(
     BuildContext context, {
     String? initialCameraId,
+    bool isPlateScanning = false,
+    Function(String plateNumber, Uint8List photoBytes)? onPlateDetected,
   }) {
     return showDialog<Uint8List?>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => WebCameraDialog(initialCameraId: initialCameraId),
+      builder: (_) => WebCameraDialog(
+        initialCameraId: initialCameraId,
+        isPlateScanning: isPlateScanning,
+        onPlateDetected: onPlateDetected,
+      ),
     );
   }
 

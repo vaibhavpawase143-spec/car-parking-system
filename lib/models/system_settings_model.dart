@@ -34,6 +34,16 @@ class SystemSettingsModel {
   final bool advanceEnabled;
   final bool singleActiveDeviceEnabled;
 
+  // Entry Form Field Visibility & Requiredness
+  final bool requireNumberPlate;
+  final bool numberPlateVisible;
+  final bool requirePlatePhoto;
+  final bool platePhotoVisible;
+  final bool vehiclePhotoVisible;
+  final bool requireVehiclePhoto;
+  final bool customerMobileVisible;
+  final bool requireCustomerMobile;
+
   const SystemSettingsModel({
     this.carTotalCapacity = AppConstants.defaultCarTotalCapacity,
     this.twoWheelerTotalCapacity = AppConstants.defaultTwoWheelerTotalCapacity,
@@ -59,6 +69,14 @@ class SystemSettingsModel {
     this.upiEnabled = true,
     this.advanceEnabled = true,
     this.singleActiveDeviceEnabled = true,
+    this.requireNumberPlate = false,
+    this.numberPlateVisible = true,
+    this.requirePlatePhoto = true,
+    this.platePhotoVisible = true,
+    this.vehiclePhotoVisible = true,
+    this.requireVehiclePhoto = false,
+    this.customerMobileVisible = true,
+    this.requireCustomerMobile = true,
   });
 
   factory SystemSettingsModel.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -115,6 +133,14 @@ class SystemSettingsModel {
       upiEnabled: data['upiEnabled'] as bool? ?? true,
       advanceEnabled: data['advanceEnabled'] as bool? ?? true,
       singleActiveDeviceEnabled: data['singleActiveDeviceEnabled'] as bool? ?? true,
+      requireNumberPlate: data['requireNumberPlate'] as bool? ?? false,
+      numberPlateVisible: data['numberPlateVisible'] as bool? ?? true,
+      requirePlatePhoto: data['requirePlatePhoto'] as bool? ?? true,
+      platePhotoVisible: data['platePhotoVisible'] as bool? ?? true,
+      vehiclePhotoVisible: data['vehiclePhotoVisible'] as bool? ?? true,
+      requireVehiclePhoto: data['requireVehiclePhoto'] as bool? ?? false,
+      customerMobileVisible: data['customerMobileVisible'] as bool? ?? true,
+      requireCustomerMobile: data['requireCustomerMobile'] as bool? ?? true,
     );
   }
 
@@ -144,6 +170,14 @@ class SystemSettingsModel {
       'upiEnabled': upiEnabled,
       'advanceEnabled': advanceEnabled,
       'singleActiveDeviceEnabled': singleActiveDeviceEnabled,
+      'requireNumberPlate': requireNumberPlate,
+      'numberPlateVisible': numberPlateVisible,
+      'requirePlatePhoto': requirePlatePhoto,
+      'platePhotoVisible': platePhotoVisible,
+      'vehiclePhotoVisible': vehiclePhotoVisible,
+      'requireVehiclePhoto': requireVehiclePhoto,
+      'customerMobileVisible': customerMobileVisible,
+      'requireCustomerMobile': requireCustomerMobile,
       'updatedAt': FieldValue.serverTimestamp(),
     };
   }
@@ -173,6 +207,14 @@ class SystemSettingsModel {
     bool? upiEnabled,
     bool? advanceEnabled,
     bool? singleActiveDeviceEnabled,
+    bool? requireNumberPlate,
+    bool? numberPlateVisible,
+    bool? requirePlatePhoto,
+    bool? platePhotoVisible,
+    bool? vehiclePhotoVisible,
+    bool? requireVehiclePhoto,
+    bool? customerMobileVisible,
+    bool? requireCustomerMobile,
   }) {
     return SystemSettingsModel(
       carTotalCapacity: carTotalCapacity ?? this.carTotalCapacity,
@@ -199,6 +241,14 @@ class SystemSettingsModel {
       upiEnabled: upiEnabled ?? this.upiEnabled,
       advanceEnabled: advanceEnabled ?? this.advanceEnabled,
       singleActiveDeviceEnabled: singleActiveDeviceEnabled ?? this.singleActiveDeviceEnabled,
+      requireNumberPlate: requireNumberPlate ?? this.requireNumberPlate,
+      numberPlateVisible: numberPlateVisible ?? this.numberPlateVisible,
+      requirePlatePhoto: requirePlatePhoto ?? this.requirePlatePhoto,
+      platePhotoVisible: platePhotoVisible ?? this.platePhotoVisible,
+      vehiclePhotoVisible: vehiclePhotoVisible ?? this.vehiclePhotoVisible,
+      requireVehiclePhoto: requireVehiclePhoto ?? this.requireVehiclePhoto,
+      customerMobileVisible: customerMobileVisible ?? this.customerMobileVisible,
+      requireCustomerMobile: requireCustomerMobile ?? this.requireCustomerMobile,
     );
   }
 }
