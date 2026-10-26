@@ -369,6 +369,10 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
       final camera = controller.description;
       final orientation = controller.value.deviceOrientation;
 
+      if (kDebugMode) {
+        debugPrint('[VehicleEntry] Sending camera frame to LiveCameraOcrService...');
+      }
+
       await _liveOcrService.processCameraImage(
         cameraImage: image,
         cameraDescription: camera,
@@ -381,6 +385,13 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
         onQrDetected: (qrResult) {
           if (mounted) {
             _handleBarcodeCaptureFromLive(qrResult);
+          }
+        },
+        onStatusUpdate: (status) {
+          if (mounted && _scannerStatusMessage != status) {
+            setState(() {
+              _scannerStatusMessage = status;
+            });
           }
         },
       );
@@ -775,7 +786,13 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
 
   Future<void> _capturePlatePhoto() async {
     if (kIsWeb) {
-      final captured = await WebCameraDialog.show(context);
+      final captured = await WebCameraDialog.show(
+        context,
+        isPlateScanning: true,
+        onPlateDetected: (plate, photo) {
+          _handleLivePlateDetected(plate, 0.95);
+        },
+      );
       if (captured != null && captured.isNotEmpty) {
         setState(() {
           _platePhotoBytes = captured;
@@ -783,7 +800,20 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
         });
       }
     } else {
-      await _pickPhoto(ImageSource.camera, isPlatePhoto: true);
+      // On mobile, continuous live scanning runs directly inside the screen camera viewport.
+      // Trigger a rescan so guard can align plate in frame.
+      _liveOcrService.resetStability();
+      setState(() {
+        _isScanningActive = true;
+        _scannerStatusMessage = AppStrings.scanningForQrAndPlate;
+        _errorMessage = null;
+      });
+      final controller = _cameraController;
+      if (controller != null &&
+          controller.value.isInitialized &&
+          !controller.value.isStreamingImages) {
+        await _startImageStream();
+      }
     }
   }
 
@@ -1151,7 +1181,58 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
 
             // Camera Viewport with Number-Plate Framing Guide
             _buildCameraViewport(height: compact ? 220 : 280),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
+
+            // Live OCR Scanning Status Banner
+            if (_isScanningActive && !_isCameraPermissionDenied) ...[
+              Container(
+                key: const ValueKey('live_ocr_status_banner'),
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: (_detectedQrPlate != null || _detectedOcrPlate != null)
+                      ? AppColors.successLight
+                      : AppColors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: (_detectedQrPlate != null || _detectedOcrPlate != null)
+                        ? AppColors.success
+                        : AppColors.border,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      (_detectedQrPlate != null || _detectedOcrPlate != null)
+                          ? Icons.check_circle
+                          : Icons.radar,
+                      size: 16,
+                      color: (_detectedQrPlate != null || _detectedOcrPlate != null)
+                          ? AppColors.successDark
+                          : AppColors.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _scannerStatusMessage ??
+                            ((_detectedQrPlate != null || _detectedOcrPlate != null)
+                                ? '${AppStrings.plateConfirmed}: ${_detectedOcrPlate ?? _detectedQrPlate}'
+                                : AppStrings.scanningForQrAndPlate),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: (_detectedQrPlate != null || _detectedOcrPlate != null)
+                              ? AppColors.successDark
+                              : AppColors.textPrimary,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
 
             // Camera Controls: Torch, Switch Camera, Rescan
             Wrap(
@@ -1232,6 +1313,9 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
     }
     if (_liveOcrService.stabilityTracker.hasPendingCandidate) {
       return StatusBadge(label: AppStrings.verifyingStability, type: BadgeType.warning);
+    }
+    if (_scannerStatusMessage != null && _scannerStatusMessage!.isNotEmpty) {
+      return StatusBadge(label: _scannerStatusMessage!, type: BadgeType.info);
     }
     return StatusBadge(label: AppStrings.liveOcrActive, type: BadgeType.info);
   }

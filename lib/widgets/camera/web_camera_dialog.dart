@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:car_parking_system/core/theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import '../../services/ocr/plate_ocr_service.dart';
 
 import 'web_camera_stub.dart'
     if (dart.library.html) 'web_camera_html.dart';
@@ -49,6 +50,8 @@ class _WebCameraDialogState extends State<WebCameraDialog> {
   Uint8List? _capturedBytes;
   bool _isCapturing = false;
   bool _isSwitching = false;
+  Timer? _liveScanTimer;
+  String _liveScanStatus = 'Scanning for plate...';
 
   List<CameraDeviceInfo> _availableCameras = [];
   CameraDeviceInfo? _currentCamera;
@@ -102,6 +105,10 @@ class _WebCameraDialogState extends State<WebCameraDialog> {
         _availableCameras = cameras;
         _currentCamera = activeCamera;
       });
+
+      if (widget.isPlateScanning) {
+        _startLivePlateScanner();
+      }
     } else {
       setState(() {
         _isLoading = false;
@@ -110,6 +117,34 @@ class _WebCameraDialogState extends State<WebCameraDialog> {
             'Camera permission is required to capture the vehicle photo.';
       });
     }
+  }
+
+  void _startLivePlateScanner() {
+    if (!widget.isPlateScanning) return;
+    _liveScanTimer?.cancel();
+    _liveScanTimer = Timer.periodic(const Duration(milliseconds: 700), (_) async {
+      if (!mounted || _isCapturing || _isLoading || _hasError || _capturedBytes != null) return;
+      try {
+        final frameBytes = await WebCameraPlatform.captureFrame(_viewId);
+        if (frameBytes != null && frameBytes.isNotEmpty) {
+          final evaluated = await PlateOcrService.recognizePlate(imageBytes: frameBytes);
+          if (evaluated.hasPlate && evaluated.isHighConfidence && mounted) {
+            _liveScanTimer?.cancel();
+            setState(() {
+              _liveScanStatus = 'Plate detected: ${evaluated.plateNumber}!';
+              _capturedBytes = frameBytes;
+            });
+            widget.onPlateDetected?.call(evaluated.plateNumber!, frameBytes);
+            Future.delayed(const Duration(milliseconds: 300), () {
+              if (mounted) {
+                WebCameraPlatform.stopStream(_viewId);
+                Navigator.pop(context, frameBytes);
+              }
+            });
+          }
+        }
+      } catch (_) {}
+    });
   }
 
   /// Prefers rear camera if available, else first camera in list
@@ -200,6 +235,7 @@ class _WebCameraDialogState extends State<WebCameraDialog> {
 
   @override
   void dispose() {
+    _liveScanTimer?.cancel();
     WebCameraPlatform.stopStream(_viewId);
     super.dispose();
   }
@@ -237,7 +273,11 @@ class _WebCameraDialogState extends State<WebCameraDialog> {
                         const SizedBox(width: 8),
                         Flexible(
                           child: Text(
-                            isPreviewing ? 'Captured Photo Preview' : 'Live Vehicle Camera',
+                            isPreviewing
+                                ? 'Captured Photo Preview'
+                                : (widget.isPlateScanning
+                                    ? 'Number Plate Scanner (Live OCR)'
+                                    : 'Live Vehicle Camera'),
                             style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w700,
@@ -422,13 +462,15 @@ class _WebCameraDialogState extends State<WebCameraDialog> {
                               border: Border.all(color: Colors.white38, width: 1.5),
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: const Align(
+                            child: Align(
                               alignment: Alignment.bottomCenter,
                               child: Padding(
-                                padding: EdgeInsets.all(6.0),
+                                padding: const EdgeInsets.all(6.0),
                                 child: Text(
-                                  'Align Vehicle / Plate in Frame',
-                                  style: TextStyle(
+                                  widget.isPlateScanning
+                                      ? 'Align Number Plate in Frame'
+                                      : 'Align Vehicle / Plate in Frame',
+                                  style: const TextStyle(
                                     color: Colors.white70,
                                     fontSize: 10,
                                     fontWeight: FontWeight.w600,
@@ -563,29 +605,64 @@ class _WebCameraDialogState extends State<WebCameraDialog> {
 
                     const SizedBox(width: 12),
 
-                    // Capture button
-                    Expanded(
-                      flex: 2,
-                      child: ElevatedButton.icon(
-                        onPressed: (_isLoading || _hasError || _isCapturing || _isSwitching)
-                            ? null
-                            : _capturePhoto,
-                        icon: _isCapturing
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                              )
-                            : const Icon(Icons.camera_alt, size: 18),
-                        label: Text(_isCapturing ? 'Capturing...' : 'Capture Photo'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          elevation: 0,
+                    if (!widget.isPlateScanning)
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton.icon(
+                          key: const ValueKey('capture_photo_button'),
+                          onPressed: (_isLoading || _hasError || _isCapturing || _isSwitching)
+                              ? null
+                              : _capturePhoto,
+                          icon: _isCapturing
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                                )
+                              : const Icon(Icons.camera_alt, size: 18),
+                          label: Text(_isCapturing ? 'Capturing...' : 'Capture Photo'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            elevation: 0,
+                          ),
+                        ),
+                      )
+                    else
+                      Expanded(
+                        flex: 2,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                          decoration: BoxDecoration(
+                            color: AppColors.primarySurface,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  _liveScanStatus,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primary,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
                   ],
                 ),
             ],

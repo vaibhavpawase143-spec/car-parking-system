@@ -57,13 +57,17 @@ class LiveCameraOcrPlatform {
       return;
     }
 
+    if (kDebugMode) {
+      debugPrint('[LiveCameraOcr] Frame -> InputImage conversion successful. Calling _textRecognizer.processImage()...');
+    }
+
     // 1. Text Recognition for Live Number Plate Extraction
     try {
       final recognizedText = await _textRecognizer.processImage(inputImage);
       final raw = recognizedText.text.trim();
 
-      if (kDebugMode && raw.isNotEmpty) {
-        debugPrint('[LiveCameraOcr] OCR raw text: ${raw.replaceAll('\n', ' | ')}');
+      if (kDebugMode) {
+        debugPrint('[LiveCameraOcr] OCR returned blocks: ${recognizedText.blocks.length}, rawText: "${raw.replaceAll('\n', ' ')}"');
       }
 
       if (raw.isNotEmpty) {
@@ -83,13 +87,13 @@ class LiveCameraOcrPlatform {
             onPlateDetected(stablePlate, 0.95);
           } else {
             if (kDebugMode) {
-              debugPrint('[LiveCameraOcr] Stability count: ${stabilityTracker.consecutiveCount}/${stabilityTracker.requiredConsecutiveMatches} for $candidate');
+              debugPrint('[LiveCameraOcr] Stability progress: ${stabilityTracker.consecutiveCount}/${stabilityTracker.requiredConsecutiveMatches} for $candidate');
             }
             onStatusUpdate?.call(stabilityTracker.statusText);
           }
         } else {
           if (kDebugMode) {
-            debugPrint('[LiveCameraOcr] Text detected but no valid Indian plate candidate found');
+            debugPrint('[LiveCameraOcr] Text detected but no valid Indian plate candidate found (rejection: non-matching format or noise)');
           }
           onStatusUpdate?.call('Text detected — validating plate...');
         }
@@ -122,12 +126,21 @@ class LiveCameraOcrPlatform {
     }
   }
 
-  static final RegExp _indianPlatePattern = RegExp(
+  // Matches Indian HSRP / standard plates with 36 state codes (e.g. MH 12 AB 1234, IND MH12AB1234, MH-12-AB-1234)
+  static final RegExp _indianStatePlatePattern = RegExp(
+    r'(?:IND[\s\.\-]*)?(AP|AR|AS|BR|CG|CH|DD|DL|DN|GA|GJ|HP|HR|JH|JK|KA|KL|LA|LD|MH|ML|MN|MP|MZ|NL|OD|OR|PB|PY|RJ|SK|TN|TR|TS|UA|UK|UP|WB)\s*([0-9]{1,2})\s*([A-Z]{0,3})\s*([0-9]{1,4})',
+    caseSensitive: false,
+  );
+
+  // General fallback for any 2-letter state code
+  static final RegExp _generalPlatePattern = RegExp(
     r'\b([A-Z]{2})\s*([0-9]{1,2})\s*([A-Z]{0,3})\s*([0-9]{1,4})\b',
     caseSensitive: false,
   );
+
+  // Bharat series format: 22 BH 1234 AA
   static final RegExp _bharatSeriesPattern = RegExp(
-    r'\b([0-9]{2})\s*(BH)\s*([0-9]{4})\s*([A-Z]{1,2})\b',
+    r'([0-9]{2})\s*(BH)\s*([0-9]{4})\s*([A-Z]{1,2})',
     caseSensitive: false,
   );
 
@@ -143,10 +156,17 @@ class LiveCameraOcrPlatform {
       }
     }
 
-    // 1. Direct regex extraction across each line (handles "IND MH 12 AB 1234", "MH-12-AB-1234")
+    // 1. Prioritized state-code regex extraction across each line (handles "IND MH 12 AB 1234", "IND•MH12AB1234", "MH-12-AB-1234")
     for (final line in lines) {
-      final match = _indianPlatePattern.firstMatch(line) ?? _bharatSeriesPattern.firstMatch(line);
-      if (match != null) {
+      for (final match in _indianStatePlatePattern.allMatches(line)) {
+        final matchedText = match.group(0)!;
+        final normalized = AppFormatters.normalizeVehicleNumber(matchedText);
+        final clean = normalized.startsWith('IND') && normalized.length > 3 ? normalized.substring(3) : normalized;
+        if (AppFormatters.isValidVehicleNumber(clean)) {
+          return clean;
+        }
+      }
+      for (final match in _bharatSeriesPattern.allMatches(line)) {
         final matchedText = match.group(0)!;
         final normalized = AppFormatters.normalizeVehicleNumber(matchedText);
         if (AppFormatters.isValidVehicleNumber(normalized)) {
@@ -163,7 +183,19 @@ class LiveCameraOcrPlatform {
       }
     }
 
-    // 3. Adjacent two-line candidate check (e.g. MH12 on top, AB1234 on bottom)
+    // 3. Fallback general plate pattern with allMatches
+    for (final line in lines) {
+      for (final match in _generalPlatePattern.allMatches(line)) {
+        final matchedText = match.group(0)!;
+        final normalized = AppFormatters.normalizeVehicleNumber(matchedText);
+        final clean = normalized.startsWith('IND') && normalized.length > 3 ? normalized.substring(3) : normalized;
+        if (AppFormatters.isValidVehicleNumber(clean)) {
+          return clean;
+        }
+      }
+    }
+
+    // 4. Adjacent two-line candidate check (e.g. MH12 on top, AB1234 on bottom)
     for (int i = 0; i < lines.length - 1; i++) {
       final combined = PlateOcrPlatform.cleanOcrCandidate('${lines[i]} ${lines[i + 1]}');
       if (AppFormatters.isValidVehicleNumber(combined)) {
@@ -171,21 +203,22 @@ class LiveCameraOcrPlatform {
       }
     }
 
-    // 4. Regex extraction from full raw text
+    // 5. Full text regex extraction
     final fullText = recognizedText.text;
-    final fullMatch = _indianPlatePattern.firstMatch(fullText) ?? _bharatSeriesPattern.firstMatch(fullText);
-    if (fullMatch != null) {
-      final matchedText = fullMatch.group(0)!;
+    for (final match in _indianStatePlatePattern.allMatches(fullText)) {
+      final matchedText = match.group(0)!;
+      final normalized = AppFormatters.normalizeVehicleNumber(matchedText);
+      final clean = normalized.startsWith('IND') && normalized.length > 3 ? normalized.substring(3) : normalized;
+      if (AppFormatters.isValidVehicleNumber(clean)) {
+        return clean;
+      }
+    }
+    for (final match in _bharatSeriesPattern.allMatches(fullText)) {
+      final matchedText = match.group(0)!;
       final normalized = AppFormatters.normalizeVehicleNumber(matchedText);
       if (AppFormatters.isValidVehicleNumber(normalized)) {
         return normalized;
       }
-    }
-
-    // 5. Fallback evaluator
-    final evaluated = PlateScannerService.evaluateOcr(detectedText: fullText);
-    if (evaluated.hasPlate && evaluated.isHighConfidence) {
-      return evaluated.plateNumber;
     }
 
     // 6. Optical character error correction (O<->0, I<->1, B<->8, S<->5)
@@ -194,6 +227,12 @@ class LiveCameraOcrPlatform {
       if (corrected != null && AppFormatters.isValidVehicleNumber(corrected)) {
         return AppFormatters.normalizeVehicleNumber(corrected);
       }
+    }
+
+    // 7. Fallback evaluator
+    final evaluated = PlateScannerService.evaluateOcr(detectedText: fullText);
+    if (evaluated.hasPlate && evaluated.isHighConfidence) {
+      return evaluated.plateNumber;
     }
 
     return null;
@@ -233,22 +272,27 @@ class LiveCameraOcrPlatform {
         ? InputImageFormat.nv21
         : (parsedFormat ?? InputImageFormat.bgra8888);
 
+    final int bytesPerRow;
     Uint8List bytes;
     if (image.planes.length == 1) {
       bytes = image.planes.first.bytes;
+      bytesPerRow = image.planes.first.bytesPerRow;
     } else if (image.planes.length == 3 && Platform.isAndroid) {
       bytes = _yuv420ToNv21(image);
+      // Essential: _yuv420ToNv21 strips row stride padding and writes packed rows of width `image.width`
+      bytesPerRow = image.width;
     } else {
       final allBytes = WriteBuffer();
       for (final plane in image.planes) {
         allBytes.putUint8List(plane.bytes);
       }
       bytes = allBytes.done().buffer.asUint8List();
+      bytesPerRow = image.planes.first.bytesPerRow;
     }
 
     if (kDebugMode) {
       debugPrint('[LiveCameraOcr] Frame metadata: format=$rawFormat ($format), planes=${image.planes.length}, '
-          'w=${image.width}, h=${image.height}, bytes=${bytes.length}, rot=${rotation.name}');
+          'w=${image.width}, h=${image.height}, bytesPerRow=$bytesPerRow, bytes=${bytes.length}, rot=${rotation.name}');
     }
 
     return InputImage.fromBytes(
@@ -257,7 +301,7 @@ class LiveCameraOcrPlatform {
         size: Size(image.width.toDouble(), image.height.toDouble()),
         rotation: rotation,
         format: format,
-        bytesPerRow: image.planes.first.bytesPerRow,
+        bytesPerRow: bytesPerRow,
       ),
     );
   }

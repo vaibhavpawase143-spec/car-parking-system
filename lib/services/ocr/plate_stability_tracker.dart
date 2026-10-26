@@ -16,7 +16,7 @@ class PlateStabilityTracker {
 
   PlateStabilityTracker({
     this.requiredConsecutiveMatches = 2,
-    this.windowDuration = const Duration(milliseconds: 1500),
+    this.windowDuration = const Duration(milliseconds: 3500),
   });
 
   /// Evaluates a candidate plate from an incoming camera frame.

@@ -184,7 +184,7 @@ class PlateScannerService {
   /// Evaluates ANPR/OCR text from a camera snapshot or photo frame.
   /// Returns a [PlateScanResult] with confidence evaluation.
   static PlateScanResult evaluateOcr({
-    required String detectedText,
+    String detectedText = '',
     Uint8List? photoBytes,
     double defaultConfidence = 0.90,
   }) {
@@ -194,10 +194,13 @@ class PlateScannerService {
 
     final double conf = mockConfidence ?? defaultConfidence;
     final normalized = AppFormatters.normalizeVehicleNumber(detectedText);
+    final clean = normalized.startsWith('IND') && normalized.length > 3
+        ? normalized.substring(3)
+        : normalized;
 
-    if (AppFormatters.isValidVehicleNumber(normalized)) {
+    if (AppFormatters.isValidVehicleNumber(clean)) {
       return PlateScanResult(
-        plateNumber: normalized,
+        plateNumber: clean,
         confidence: conf,
         isOcr: true,
         rawData: detectedText,
@@ -205,14 +208,50 @@ class PlateScannerService {
       );
     }
 
-    // Attempt regex extraction from noisy OCR text
-    final standardMatch = RegExp(r'[A-Z]{2}\d{1,2}[A-Z]{0,3}\d{1,5}[A-Z]?').firstMatch(normalized);
+    // 1. Attempt Indian state code regex extraction (handles "IND MH 12 AB 1234", "IND•MH12AB1234", etc.)
+    final stateMatch = RegExp(
+      r'(?:IND)?(AP|AR|AS|BR|CG|CH|DD|DL|DN|GA|GJ|HP|HR|JH|JK|KA|KL|LA|LD|MH|ML|MN|MP|MZ|NL|OD|OR|PB|PY|RJ|SK|TN|TR|TS|UA|UK|UP|WB)\d{1,2}[A-Z]{0,3}\d{1,4}',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    if (stateMatch != null) {
+      final candidate = stateMatch.group(0)!;
+      final cleanCandidate = candidate.startsWith('IND') && candidate.length > 3
+          ? candidate.substring(3)
+          : candidate;
+      if (AppFormatters.isValidVehicleNumber(cleanCandidate)) {
+        return PlateScanResult(
+          plateNumber: cleanCandidate,
+          confidence: conf * 0.90,
+          isOcr: true,
+          rawData: detectedText,
+          photoBytes: photoBytes,
+        );
+      }
+    }
+
+    // 2. Bharat series match
+    final bhMatch = RegExp(r'\d{2}BH\d{4}[A-Z]{1,2}', caseSensitive: false).firstMatch(normalized);
+    if (bhMatch != null) {
+      final candidate = bhMatch.group(0)!;
+      if (AppFormatters.isValidVehicleNumber(candidate)) {
+        return PlateScanResult(
+          plateNumber: candidate,
+          confidence: conf * 0.90,
+          isOcr: true,
+          rawData: detectedText,
+          photoBytes: photoBytes,
+        );
+      }
+    }
+
+    // 3. General fallback regex extraction from noisy OCR text
+    final standardMatch = RegExp(r'[A-Z]{2}\d{1,2}[A-Z]{0,3}\d{1,5}[A-Z]?').firstMatch(clean);
     if (standardMatch != null) {
       final candidate = standardMatch.group(0)!;
       if (AppFormatters.isValidVehicleNumber(candidate)) {
         return PlateScanResult(
           plateNumber: candidate,
-          confidence: conf * 0.85, // slightly reduced confidence for noisy match
+          confidence: conf * 0.85,
           isOcr: true,
           rawData: detectedText,
           photoBytes: photoBytes,

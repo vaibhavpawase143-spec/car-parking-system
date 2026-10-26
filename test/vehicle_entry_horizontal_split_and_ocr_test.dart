@@ -8,8 +8,11 @@ import 'package:car_parking_system/services/ocr/live_camera_ocr_service.dart';
 import 'package:car_parking_system/services/ocr/plate_ocr_service.dart';
 import 'package:car_parking_system/services/ocr/plate_stability_tracker.dart';
 import 'package:car_parking_system/services/plate_scanner_service.dart';
+import 'package:car_parking_system/widgets/camera/web_camera_dialog.dart';
+import 'package:car_parking_system/widgets/camera/web_camera_stub.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -28,6 +31,7 @@ void main() {
     VehicleEntryScreen.mockCapturedPhoto = null;
     PlateScannerService.resetMocks();
     PlateOcrService.resetMocks();
+    WebCameraPlatform.resetMocks();
     AppStrings.setLanguage(AppLanguage.english);
   });
 
@@ -37,6 +41,7 @@ void main() {
     VehicleEntryScreen.mockCapturedPhoto = null;
     PlateScannerService.resetMocks();
     PlateOcrService.resetMocks();
+    WebCameraPlatform.resetMocks();
   });
 
   group('VEHICLE ENTRY — HORIZONTAL SPLIT, SCANNING & OCR TESTS', () {
@@ -694,6 +699,152 @@ void main() {
       expect(service.stabilityTracker.consecutiveCount, equals(0));
 
       await service.dispose();
+    });
+
+    test('20. Real Sample Plate Image OCR pipeline extracts MH12AB1234 from HSRP plate image with IND band and laser pin noise', () {
+      // 1. Generate a genuine encoded PNG image of an HSRP vehicle registration plate
+      final plateCanvas = img.Image(width: 240, height: 70);
+      img.fill(plateCanvas, color: img.ColorRgb8(255, 255, 255));
+      // Blue IND strip on left side of HSRP plate
+      img.fillRect(plateCanvas, x1: 0, y1: 0, x2: 30, y2: 70, color: img.ColorRgb8(0, 51, 153));
+      final realPlatePngBytes = Uint8List.fromList(img.encodePng(plateCanvas));
+
+      // Verify the generated plate is a genuine, non-placeholder image
+      expect(realPlatePngBytes.length, greaterThan(100));
+      expect(PlateScannerService.isPlaceholder(realPlatePngBytes), isFalse);
+
+      // 2. Test OCR evaluation on real HSRP formatted text containing IND and laser pin
+      final hsrpCandidateWithLaserPin = 'AA2039485721\nIND\nMH 12 AB 1234';
+      final evaluated1 = PlateScannerService.evaluateOcr(
+        detectedText: hsrpCandidateWithLaserPin,
+        photoBytes: realPlatePngBytes,
+      );
+      expect(evaluated1.hasPlate, isTrue);
+      expect(evaluated1.plateNumber, equals('MH12AB1234'));
+      expect(evaluated1.isHighConfidence, isTrue);
+      expect(evaluated1.photoBytes, isNotNull);
+      expect(PlateScannerService.isPlaceholder(evaluated1.photoBytes), isFalse);
+
+      // 3. Test OCR evaluation on single-line IND-prefixed plate
+      final evaluated2 = PlateScannerService.evaluateOcr(
+        detectedText: 'IND MH 12 AB 1234',
+        photoBytes: realPlatePngBytes,
+      );
+      expect(evaluated2.hasPlate, isTrue);
+      expect(evaluated2.plateNumber, equals('MH12AB1234'));
+
+      // 4. Test hyphenated plate format
+      final evaluated3 = PlateScannerService.evaluateOcr(
+        detectedText: 'MH-12-AB-1234',
+        photoBytes: realPlatePngBytes,
+      );
+      expect(evaluated3.hasPlate, isTrue);
+      expect(evaluated3.plateNumber, equals('MH12AB1234'));
+
+      // 5. Test Bharat series HSRP plate format
+      final evaluated4 = PlateScannerService.evaluateOcr(
+        detectedText: 'IND 22 BH 1234 AA',
+        photoBytes: realPlatePngBytes,
+      );
+      expect(evaluated4.hasPlate, isTrue);
+      expect(evaluated4.plateNumber, equals('22BH1234AA'));
+
+      // 6. Verify that PlateStabilityTracker successfully locks on the extracted plate
+      final tracker = PlateStabilityTracker(
+        requiredConsecutiveMatches: 2,
+        windowDuration: const Duration(milliseconds: 3500),
+      );
+      expect(tracker.addCandidate(evaluated1.plateNumber!), isNull); // 1st frame
+      expect(tracker.addCandidate(evaluated1.plateNumber!), equals('MH12AB1234')); // 2nd frame locks
+      expect(tracker.isLocked, isTrue);
+      expect(tracker.lockedPlate, equals('MH12AB1234'));
+    });
+
+    testWidgets('21. WebCameraDialog plate scanning mode removes manual Capture Photo button, while optional vehicle photo mode keeps it', (tester) async {
+      tester.view.physicalSize = const Size(800, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+        WebCameraPlatform.resetMocks();
+      });
+
+      WebCameraPlatform.mockStartStream = (viewId, {deviceId, preferredFacing}) async =>
+          CameraStartResult.success();
+      WebCameraPlatform.mockGetAvailableCameras = () async => [
+        CameraDeviceInfo(
+          id: 'rear-cam-001',
+          label: 'Back Camera HD',
+          facing: CameraFacing.rear,
+        ),
+      ];
+
+      // A) Plate Scanning Mode (isPlateScanning = true)
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: WebCameraDialog(
+              isPlateScanning: true,
+              onPlateDetected: (plate, photo) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // In plate scanning mode, manual "Capture Photo" button MUST NOT exist
+      expect(find.byKey(const ValueKey('capture_photo_button')), findsNothing);
+      expect(find.text('Capture Photo'), findsNothing);
+      expect(find.text('Number Plate Scanner (Live OCR)'), findsOneWidget);
+      expect(find.text('Align Number Plate in Frame'), findsOneWidget);
+
+      // Clean up previous widget
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // B) Optional Vehicle Photo Mode (isPlateScanning = false)
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: WebCameraDialog(
+              isPlateScanning: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // In vehicle photo mode, manual "Capture Photo" button IS present
+      expect(find.byKey(const ValueKey('capture_photo_button')), findsOneWidget);
+      expect(find.text('Live Vehicle Camera'), findsOneWidget);
+      expect(find.text('Align Vehicle / Plate in Frame'), findsOneWidget);
+    });
+
+    testWidgets('22. Live OCR status banner is displayed below camera viewport with dynamic feedback', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: VehicleEntryScreen(
+              currentGuard: testGuard,
+              onReturnDashboard: () {},
+              onViewActiveParking: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Live OCR Status Banner is displayed right below the camera viewport
+      expect(find.byKey(const ValueKey('live_ocr_status_banner')), findsOneWidget);
     });
   });
 }
