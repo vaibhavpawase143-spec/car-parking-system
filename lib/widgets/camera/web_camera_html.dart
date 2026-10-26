@@ -295,16 +295,26 @@ class WebCameraPlatform {
     }
   }
 
+  static Future<Uint8List?> Function(String viewId)? mockCaptureFrame;
+
   /// Captures current video frame from the active camera stream.
   static Future<Uint8List?> captureFrame(String viewId) async {
+    if (mockCaptureFrame != null) {
+      return await mockCaptureFrame!(viewId);
+    }
+
     final session = _sessions[viewId];
     if (session == null || session.stream == null) {
       return null;
     }
 
     final video = session.videoElement;
-    final w = video.videoWidth > 0 ? video.videoWidth : 1280;
-    final h = video.videoHeight > 0 ? video.videoHeight : 720;
+    if (video.readyState < 2 || video.videoWidth == 0 || video.videoHeight == 0) {
+      return null;
+    }
+
+    final w = video.videoWidth;
+    final h = video.videoHeight;
 
     final canvas = html.CanvasElement(width: w, height: h);
     final ctx = canvas.context2D;
@@ -428,6 +438,11 @@ class WebCameraPlatform {
       return errStr.split(':').first.trim();
     }
     return null;
+  }
+
+  static void resetMocks() {
+    mockCaptureFrame = null;
+    lastSelectedDeviceId = null;
   }
 }
 

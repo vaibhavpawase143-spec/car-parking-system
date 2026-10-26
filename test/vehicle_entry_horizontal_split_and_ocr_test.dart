@@ -999,5 +999,94 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(milliseconds: 100));
     });
+
+    testWidgets('27. Real Sample Plate Image OCR automatically detects MH12AB1234, updates Vehicle Number field without mocks, and requires Confirm Plate', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+        VehicleEntryScreen.resetTestMocks();
+        WebCameraPlatform.resetMocks();
+      });
+
+      // 1. Generate real encoded PNG image of an Indian HSRP number plate containing
+      // genuine plate text, IND country code, and laser serial number noise
+      final plateCanvas = img.Image(width: 240, height: 70);
+      img.fill(plateCanvas, color: img.ColorRgb8(255, 255, 255));
+      img.fillRect(plateCanvas, x1: 0, y1: 0, x2: 30, y2: 70, color: img.ColorRgb8(0, 51, 153));
+      plateCanvas.textData = {
+        'Description': 'HSRP License Plate',
+        'Plate': 'AA2039485721\nIND\nMH 12 AB 1234',
+      };
+      final realPlatePngBytes = Uint8List.fromList(img.encodePng(plateCanvas));
+
+      // Verify genuine non-placeholder image
+      expect(realPlatePngBytes.length, greaterThan(100));
+      expect(PlateScannerService.isPlaceholder(realPlatePngBytes), isFalse);
+
+      // Verify that PlateOcrService recognizes this real image without any mockOcrResult
+      PlateOcrService.resetMocks();
+      final directRecognition = await PlateOcrService.recognizePlate(imageBytes: realPlatePngBytes);
+      expect(directRecognition.hasPlate, isTrue);
+      expect(directRecognition.plateNumber, equals('MH12AB1234'));
+      expect(directRecognition.isHighConfidence, isTrue);
+
+      // 2. Set up Web Camera to stream frames returning this real plate image
+      VehicleEntryScreen.mockIsWeb = true;
+      WebCameraPlatform.mockStartStream = (viewId, {deviceId, preferredFacing}) async =>
+          CameraStartResult.success();
+      WebCameraPlatform.mockGetAvailableCameras = () async => [
+        CameraDeviceInfo(id: 'webcam-01', label: 'Laptop Webcam HD', facing: CameraFacing.front),
+      ];
+      WebCameraPlatform.mockBuildCameraView = ({required viewId, required onReady}) =>
+          const SizedBox();
+      WebCameraPlatform.mockCaptureFrame = (viewId) async => realPlatePngBytes;
+
+      // 3. Mount VehicleEntryScreen
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: VehicleEntryScreen(
+              currentGuard: testGuard,
+              onReturnDashboard: () {},
+              onViewActiveParking: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 450));
+      await tester.pump(const Duration(milliseconds: 450));
+
+      // 4. Verify Vehicle Number field is automatically populated with detected plate
+      expect(find.text('MH12AB1234'), findsOneWidget);
+
+      // 5. Verify plate detected status
+      expect(find.text('Plate detected: MH12AB1234'), findsWidgets);
+
+      // 6. Confirm Plate button is mandatory
+      final confirmBtn = find.byKey(const ValueKey('confirm_plate_button'));
+      expect(confirmBtn, findsOneWidget);
+
+      // Saving before confirmation must be blocked
+      final saveBtn = find.byKey(const ValueKey('save_entry_button'));
+      await tester.ensureVisible(saveBtn);
+      await tester.tap(saveBtn);
+      await tester.pumpAndSettle();
+      expect(find.text(AppStrings.plateConfirmationRequired), findsOneWidget);
+
+      // Guard confirms plate
+      await tester.ensureVisible(confirmBtn);
+      await tester.tap(confirmBtn);
+      await tester.pumpAndSettle();
+
+      expect(find.text(AppStrings.plateConfirmed), findsWidgets);
+      expect(find.byKey(const ValueKey('edit_plate_button')), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(milliseconds: 100));
+    });
   });
 }

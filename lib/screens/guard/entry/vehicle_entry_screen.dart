@@ -369,14 +369,24 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
 
   void _startWebLivePlateScanner() {
     _webLiveScanTimer?.cancel();
-    _webLiveScanTimer = Timer.periodic(const Duration(milliseconds: 750), (_) async {
-      if (!mounted || !_isWebCameraActive || _isCameraPermissionDenied || _detectedOcrPlate != null) {
+    if (kDebugMode) {
+      debugPrint('[VehicleEntry WebOCR] Starting periodic web live plate scanner...');
+    }
+
+    _webLiveScanTimer = Timer.periodic(const Duration(milliseconds: 400), (_) async {
+      if (!mounted || !_isWebCameraActive || _isCameraPermissionDenied || _isPlateConfirmed) {
         return;
       }
+      if (_isProcessingFrame) return;
+      _isProcessingFrame = true;
+
       try {
         // 1. Scan QR from active web video stream
         final qrCode = await WebCameraPlatform.scanQrFromVideo(_webCameraViewId);
         if (qrCode != null && qrCode.isNotEmpty && mounted) {
+          if (kDebugMode) {
+            debugPrint('[VehicleEntry WebOCR] QR code detected: $qrCode');
+          }
           _handleBarcodeCaptureFromLive(PlateScanResult(
             plateNumber: qrCode,
             confidence: 1.0,
@@ -385,24 +395,94 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
           return;
         }
 
-        // 2. Scan OCR Plate from current video frame
+        // 2. Capture video frame
         final frameBytes = await WebCameraPlatform.captureFrame(_webCameraViewId);
-        if (frameBytes != null && frameBytes.isNotEmpty) {
-          final evaluated = await PlateOcrService.recognizePlate(imageBytes: frameBytes);
-          if (evaluated.hasPlate && mounted) {
-            final stable = _liveOcrService.stabilityTracker.addCandidate(evaluated.plateNumber!);
-            if (stable != null) {
-              _handleLivePlateDetected(stable, evaluated.confidence);
-              if (_platePhotoBytes == null) {
-                setState(() {
-                  _platePhotoBytes = frameBytes;
-                });
-              }
+        if (frameBytes == null || frameBytes.isEmpty) {
+          if (kDebugMode) {
+            debugPrint('[VehicleEntry WebOCR] Frame capture returned empty/video not ready.');
+          }
+          return;
+        }
+
+        if (kDebugMode) {
+          debugPrint('[VehicleEntry WebOCR] Frame captured (${frameBytes.length} bytes). Invoking PlateOcrService...');
+        }
+
+        if (mounted && _detectedOcrPlate == null && !_liveOcrService.stabilityTracker.hasPendingCandidate) {
+          if (_scannerStatusMessage != 'Scanning for plate') {
+            setState(() {
+              _scannerStatusMessage = 'Scanning for plate';
+            });
+          }
+        }
+
+        // 3. Invoke real OCR on frame bytes
+        final evaluated = await PlateOcrService.recognizePlate(imageBytes: frameBytes);
+
+        if (!mounted) return;
+
+        // Diagnostic log: raw data & errors
+        if (kDebugMode) {
+          debugPrint('[VehicleEntry WebOCR] OCR raw text: "${evaluated.rawData}" | Error: "${evaluated.errorMessage}"');
+        }
+
+        // If raw text was recognized
+        if (evaluated.rawData != null && evaluated.rawData!.trim().isNotEmpty) {
+          if (mounted && _detectedOcrPlate == null && !_liveOcrService.stabilityTracker.hasPendingCandidate) {
+            setState(() {
+              _scannerStatusMessage = 'Text detected';
+            });
+          }
+        }
+
+        if (evaluated.hasPlate) {
+          final candidate = evaluated.plateNumber!;
+          if (kDebugMode) {
+            debugPrint('[VehicleEntry WebOCR] Candidate extracted: $candidate (confidence: ${evaluated.confidence})');
+          }
+
+          if (mounted && _detectedOcrPlate == null) {
+            setState(() {
+              _scannerStatusMessage = 'Validating plate';
+            });
+          }
+
+          final stable = _liveOcrService.stabilityTracker.addCandidate(candidate);
+          final count = _liveOcrService.stabilityTracker.consecutiveCount;
+
+          if (kDebugMode) {
+            debugPrint('[VehicleEntry WebOCR] Stability: candidate=$candidate, count=$count/2, stable=$stable');
+          }
+
+          if (stable != null && mounted) {
+            if (kDebugMode) {
+              debugPrint('[VehicleEntry WebOCR] Plate locked: $stable. Populating vehicle number field.');
             }
+            setState(() {
+              _scannerStatusMessage = 'Plate detected: $stable';
+            });
+            _handleLivePlateDetected(stable, evaluated.confidence);
+            if (_platePhotoBytes == null) {
+              setState(() {
+                _platePhotoBytes = frameBytes;
+              });
+            }
+          }
+        } else {
+          _liveOcrService.stabilityTracker.registerEmptyFrame();
+          if (kDebugMode && evaluated.errorMessage != null) {
+            debugPrint('[VehicleEntry WebOCR] Plate rejected: ${evaluated.errorMessage}');
           }
         }
       } catch (e) {
         debugPrint('[VehicleEntry WebOCR] Frame evaluation error: $e');
+        if (mounted) {
+          setState(() {
+            _scannerStatusMessage = 'Camera / OCR Error: $e';
+          });
+        }
+      } finally {
+        _isProcessingFrame = false;
       }
     });
   }
@@ -1542,6 +1622,10 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
       return StatusBadge(label: AppStrings.verifyingStability, type: BadgeType.warning);
     }
     if (_scannerStatusMessage != null && _scannerStatusMessage!.isNotEmpty) {
+      if (_scannerStatusMessage!.toLowerCase().contains('error') ||
+          _scannerStatusMessage!.toLowerCase().contains('failed')) {
+        return StatusBadge(label: _scannerStatusMessage!, type: BadgeType.danger);
+      }
       return StatusBadge(label: _scannerStatusMessage!, type: BadgeType.info);
     }
     return StatusBadge(label: AppStrings.liveOcrActive, type: BadgeType.info);
@@ -1790,8 +1874,10 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
                       _hasConflict
                           ? 'Plate Conflict Detected'
                           : (_detectedQrPlate != null || _detectedOcrPlate != null
-                              ? 'Plate Detected'
-                              : (isStreamActive ? 'Align Plate / QR' : 'Waiting for Camera...')),
+                              ? 'Plate detected: ${_detectedOcrPlate ?? _detectedQrPlate}'
+                              : (_scannerStatusMessage != null && _scannerStatusMessage!.isNotEmpty
+                                  ? _scannerStatusMessage!
+                                  : (isStreamActive ? 'Align Plate / QR' : 'Waiting for Camera...'))),
                       style: TextStyle(
                         color: _hasConflict
                             ? AppColors.dangerLight

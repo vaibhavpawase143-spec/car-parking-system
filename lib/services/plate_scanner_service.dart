@@ -181,6 +181,75 @@ class PlateScannerService {
     );
   }
 
+  /// Cleans noise, "IND", "INDIA", "HSRP", spaces, and non-alphanumeric characters.
+  static String cleanOcrCandidate(String raw) {
+    var s = raw.toUpperCase();
+    s = s.replaceAll(RegExp(r'\b(IND|INDIA|HSRP)\b'), '');
+    s = s.replaceFirst(RegExp(r'^(IND|INDIA|HSRP)'), '');
+    s = s.replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    if (s.startsWith('IND') && s.length >= 8) {
+      final sub = s.substring(3);
+      if (AppFormatters.isValidVehicleNumber(sub)) {
+        return sub;
+      }
+    }
+    return s;
+  }
+
+  /// Detects whether a token is an HSRP laser-etched serial number rather than a vehicle plate.
+  /// HSRP laser serial numbers typically consist of 1-3 letters followed by 8-12 digits
+  /// (e.g. AA2039485721) or 8+ consecutive digits, which do not correspond to any valid state RTO registration.
+  static bool isLaserSerialNumber(String token) {
+    final clean = token.replaceAll(RegExp(r'[^A-Z0-9]'), '').toUpperCase();
+    if (clean.length >= 10 && RegExp(r'^[A-Z]{1,3}\d{7,}$').hasMatch(clean)) {
+      return true;
+    }
+    if (RegExp(r'^\d{8,}$').hasMatch(clean)) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Attempts character error correction for typical OCR confusion in license plates:
+  /// e.g. '0' vs 'O'/'D'/'Q', '1' vs 'I'/'L', '8' vs 'B', '5' vs 'S', '2' vs 'Z'.
+  static String? attemptPlateCharacterCorrection(String raw) {
+    final clean = cleanOcrCandidate(raw);
+    if (clean.length < 8 || clean.length > 11) return null;
+
+    final chars = clean.split('');
+
+    // State code prefix: indices 0, 1 -> must be letters
+    for (int i = 0; i < 2; i++) {
+      if (chars[i] == '0') chars[i] = 'O';
+      if (chars[i] == '1') chars[i] = 'I';
+      if (chars[i] == '5') chars[i] = 'S';
+      if (chars[i] == '8') chars[i] = 'B';
+    }
+
+    // District digits: indices 2, 3 -> must be digits
+    for (int i = 2; i <= 3 && i < chars.length; i++) {
+      if (chars[i] == 'O' || chars[i] == 'D' || chars[i] == 'Q') chars[i] = '0';
+      if (chars[i] == 'I' || chars[i] == 'L') chars[i] = '1';
+      if (chars[i] == 'Z') chars[i] = '2';
+      if (chars[i] == 'S') chars[i] = '5';
+      if (chars[i] == 'B') chars[i] = '8';
+    }
+
+    // Registration digits: last 4 characters -> must be digits
+    final startDigits = chars.length - 4;
+    if (startDigits >= 4) {
+      for (int i = startDigits; i < chars.length; i++) {
+        if (chars[i] == 'O' || chars[i] == 'D' || chars[i] == 'Q') chars[i] = '0';
+        if (chars[i] == 'I' || chars[i] == 'L') chars[i] = '1';
+        if (chars[i] == 'Z') chars[i] = '2';
+        if (chars[i] == 'S') chars[i] = '5';
+        if (chars[i] == 'B') chars[i] = '8';
+      }
+    }
+
+    return chars.join('');
+  }
+
   /// Evaluates ANPR/OCR text from a camera snapshot or photo frame.
   /// Returns a [PlateScanResult] with confidence evaluation.
   static PlateScanResult evaluateOcr({
@@ -193,35 +262,32 @@ class PlateScannerService {
     }
 
     final double conf = mockConfidence ?? defaultConfidence;
-    final normalized = AppFormatters.normalizeVehicleNumber(detectedText);
-    final clean = normalized.startsWith('IND') && normalized.length > 3
-        ? normalized.substring(3)
-        : normalized;
-
-    if (AppFormatters.isValidVehicleNumber(clean)) {
+    if (detectedText.trim().isEmpty) {
       return PlateScanResult(
-        plateNumber: clean,
-        confidence: conf,
         isOcr: true,
-        rawData: detectedText,
+        confidence: 0.0,
         photoBytes: photoBytes,
+        errorMessage: 'No text recognized in image.',
       );
     }
 
-    // 1. Attempt Indian state code regex extraction (handles "IND MH 12 AB 1234", "IND•MH12AB1234", etc.)
-    final stateMatch = RegExp(
-      r'(?:IND)?(AP|AR|AS|BR|CG|CH|DD|DL|DN|GA|GJ|HP|HR|JH|JK|KA|KL|LA|LD|MH|ML|MN|MP|MZ|NL|OD|OR|PB|PY|RJ|SK|TN|TR|TS|UA|UK|UP|WB)\d{1,2}[A-Z]{0,3}\d{1,4}',
-      caseSensitive: false,
-    ).firstMatch(normalized);
-    if (stateMatch != null) {
-      final candidate = stateMatch.group(0)!;
-      final cleanCandidate = candidate.startsWith('IND') && candidate.length > 3
-          ? candidate.substring(3)
-          : candidate;
-      if (AppFormatters.isValidVehicleNumber(cleanCandidate)) {
+    // 1. Split detected text into separate lines and tokens
+    final rawLines = detectedText
+        .split(RegExp(r'[\r\n]+'))
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+
+    // 2. Direct line evaluation (ignoring laser serial lines and noise words)
+    for (final line in rawLines) {
+      if (isLaserSerialNumber(line)) continue;
+      final clean = cleanOcrCandidate(line);
+      if (clean.isEmpty || clean == 'IND' || clean == 'INDIA' || clean == 'HSRP') continue;
+
+      if (AppFormatters.isValidVehicleNumber(clean)) {
         return PlateScanResult(
-          plateNumber: cleanCandidate,
-          confidence: conf * 0.90,
+          plateNumber: clean,
+          confidence: conf,
           isOcr: true,
           rawData: detectedText,
           photoBytes: photoBytes,
@@ -229,10 +295,53 @@ class PlateScannerService {
       }
     }
 
-    // 2. Bharat series match
-    final bhMatch = RegExp(r'\d{2}BH\d{4}[A-Z]{1,2}', caseSensitive: false).firstMatch(normalized);
-    if (bhMatch != null) {
-      final candidate = bhMatch.group(0)!;
+    // 3. Adjacent multi-line combination (e.g. "MH 12" on line 1, "AB 1234" on line 2)
+    final filteredLines = rawLines
+        .where((l) => !isLaserSerialNumber(l))
+        .map(cleanOcrCandidate)
+        .where((l) => l.isNotEmpty && l != 'IND' && l != 'INDIA' && l != 'HSRP')
+        .toList();
+
+    for (int i = 0; i < filteredLines.length - 1; i++) {
+      final combined = '${filteredLines[i]}${filteredLines[i + 1]}';
+      if (AppFormatters.isValidVehicleNumber(combined)) {
+        return PlateScanResult(
+          plateNumber: combined,
+          confidence: conf * 0.95,
+          isOcr: true,
+          rawData: detectedText,
+          photoBytes: photoBytes,
+        );
+      }
+    }
+
+    // 4. Remove laser serial numbers from full text before global regex match
+    var textWithoutLaser = detectedText;
+    final laserMatches = RegExp(r'\b[A-Z]{1,3}\d{7,}\b').allMatches(textWithoutLaser);
+    for (final m in laserMatches) {
+      textWithoutLaser = textWithoutLaser.replaceFirst(m.group(0)!, '');
+    }
+
+    final normalized = AppFormatters.normalizeVehicleNumber(textWithoutLaser);
+    final cleanFull = cleanOcrCandidate(normalized);
+
+    if (AppFormatters.isValidVehicleNumber(cleanFull)) {
+      return PlateScanResult(
+        plateNumber: cleanFull,
+        confidence: conf,
+        isOcr: true,
+        rawData: detectedText,
+        photoBytes: photoBytes,
+      );
+    }
+
+    // 5. Standard State code match
+    final stateMatch = RegExp(
+      r'(?:IND)?(AP|AR|AS|BR|CG|CH|DD|DL|DN|GA|GJ|HP|HR|JH|JK|KA|KL|LA|LD|MH|ML|MN|MP|MZ|NL|OD|OR|PB|PY|RJ|SK|TN|TR|TS|UA|UK|UP|WB)\d{1,2}[A-Z]{0,3}\d{1,4}',
+      caseSensitive: false,
+    ).firstMatch(cleanFull);
+    if (stateMatch != null) {
+      final candidate = cleanOcrCandidate(stateMatch.group(0)!);
       if (AppFormatters.isValidVehicleNumber(candidate)) {
         return PlateScanResult(
           plateNumber: candidate,
@@ -244,8 +353,23 @@ class PlateScannerService {
       }
     }
 
-    // 3. General fallback regex extraction from noisy OCR text
-    final standardMatch = RegExp(r'[A-Z]{2}\d{1,2}[A-Z]{0,3}\d{1,5}[A-Z]?').firstMatch(clean);
+    // 6. Bharat series match
+    final bhMatch = RegExp(r'\d{2}BH\d{4}[A-Z]{1,2}', caseSensitive: false).firstMatch(cleanFull);
+    if (bhMatch != null) {
+      final candidate = cleanOcrCandidate(bhMatch.group(0)!);
+      if (AppFormatters.isValidVehicleNumber(candidate)) {
+        return PlateScanResult(
+          plateNumber: candidate,
+          confidence: conf * 0.90,
+          isOcr: true,
+          rawData: detectedText,
+          photoBytes: photoBytes,
+        );
+      }
+    }
+
+    // 7. General fallback regex extraction from clean text
+    final standardMatch = RegExp(r'[A-Z]{2}\d{1,2}[A-Z]{0,3}\d{1,5}[A-Z]?').firstMatch(cleanFull);
     if (standardMatch != null) {
       final candidate = standardMatch.group(0)!;
       if (AppFormatters.isValidVehicleNumber(candidate)) {
@@ -259,9 +383,24 @@ class PlateScannerService {
       }
     }
 
+    // 8. Intelligent character correction on lines
+    for (final line in rawLines) {
+      if (isLaserSerialNumber(line)) continue;
+      final corrected = attemptPlateCharacterCorrection(line);
+      if (corrected != null && AppFormatters.isValidVehicleNumber(corrected)) {
+        return PlateScanResult(
+          plateNumber: corrected,
+          confidence: conf * 0.85,
+          isOcr: true,
+          rawData: detectedText,
+          photoBytes: photoBytes,
+        );
+      }
+    }
+
     return PlateScanResult(
       isOcr: true,
-      confidence: 0.30,
+      confidence: 0.20,
       rawData: detectedText,
       photoBytes: photoBytes,
       errorMessage: 'Number plate could not be recognized with sufficient confidence.',

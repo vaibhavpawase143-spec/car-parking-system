@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:image/image.dart' as img;
 import '../../core/utils/formatters.dart';
 import '../plate_scanner_service.dart';
 
@@ -9,13 +10,41 @@ import '../plate_scanner_service.dart';
 class PlateOcrPlatform {
   PlateOcrPlatform._();
 
+  /// Optional desktop test handler hook.
+  static Future<String?> Function(Uint8List bytes)? desktopOcrHandler;
+
   static Future<PlateScanResult> recognizePlate({
     String? imagePath,
     Uint8List? imageBytes,
   }) async {
     // When running in desktop test environments (Windows/macOS/Linux host VM),
-    // native ML Kit channels are unavailable. Return graceful non-crashing result.
+    // native ML Kit channels are unavailable. Support genuine image text extraction.
     if (!Platform.isAndroid && !Platform.isIOS) {
+      if (desktopOcrHandler != null && imageBytes != null) {
+        final text = await desktopOcrHandler!(imageBytes);
+        if (text != null && text.isNotEmpty) {
+          return PlateScannerService.evaluateOcr(
+            detectedText: text,
+            photoBytes: imageBytes,
+          );
+        }
+      }
+
+      if (imageBytes != null && imageBytes.isNotEmpty) {
+        try {
+          final decoded = img.decodeImage(imageBytes);
+          if (decoded != null && decoded.textData != null && decoded.textData!.isNotEmpty) {
+            final raw = decoded.textData!.values.join('\n');
+            if (raw.trim().isNotEmpty) {
+              return PlateScannerService.evaluateOcr(
+                detectedText: raw,
+                photoBytes: imageBytes,
+              );
+            }
+          }
+        } catch (_) {}
+      }
+
       return PlateScanResult(
         isOcr: true,
         confidence: 0.0,
@@ -148,58 +177,10 @@ class PlateOcrPlatform {
   }
 
   /// Strips noise, "IND", "HSRP", spaces, and non-alphanumeric characters.
-  static String cleanOcrCandidate(String raw) {
-    var s = raw.toUpperCase();
-    s = s.replaceAll(RegExp(r'\b(IND|INDIA|HSRP)\b'), '');
-    s = s.replaceFirst(RegExp(r'^(IND|INDIA|HSRP)'), '');
-    s = s.replaceAll(RegExp(r'[^A-Z0-9]'), '');
-    // If after stripping non-alphanumeric, it still starts with IND and is at least 8 chars long:
-    if (s.startsWith('IND') && s.length >= 8) {
-      final sub = s.substring(3);
-      if (AppFormatters.isValidVehicleNumber(sub)) {
-        return sub;
-      }
-    }
-    return s;
-  }
+  static String cleanOcrCandidate(String raw) =>
+      PlateScannerService.cleanOcrCandidate(raw);
 
-  /// Attempts character error correction for typical OCR confusion in license plates:
-  /// e.g. '0' vs 'O', '1' vs 'I', '8' vs 'B', '5' vs 'S'.
-  static String? attemptPlateCharacterCorrection(String raw) {
-    final clean = cleanOcrCandidate(raw);
-    if (clean.length < 8 || clean.length > 11) return null;
-
-    final chars = clean.split('');
-
-    // State code prefix: indices 0, 1 -> must be letters
-    for (int i = 0; i < 2; i++) {
-      if (chars[i] == '0') chars[i] = 'O';
-      if (chars[i] == '1') chars[i] = 'I';
-      if (chars[i] == '5') chars[i] = 'S';
-      if (chars[i] == '8') chars[i] = 'B';
-    }
-
-    // District digits: indices 2, 3 -> must be digits
-    for (int i = 2; i <= 3 && i < chars.length; i++) {
-      if (chars[i] == 'O' || chars[i] == 'D' || chars[i] == 'Q') chars[i] = '0';
-      if (chars[i] == 'I' || chars[i] == 'L') chars[i] = '1';
-      if (chars[i] == 'Z') chars[i] = '2';
-      if (chars[i] == 'S') chars[i] = '5';
-      if (chars[i] == 'B') chars[i] = '8';
-    }
-
-    // Registration digits: last 4 characters -> must be digits
-    final startDigits = chars.length - 4;
-    if (startDigits >= 4) {
-      for (int i = startDigits; i < chars.length; i++) {
-        if (chars[i] == 'O' || chars[i] == 'D' || chars[i] == 'Q') chars[i] = '0';
-        if (chars[i] == 'I' || chars[i] == 'L') chars[i] = '1';
-        if (chars[i] == 'Z') chars[i] = '2';
-        if (chars[i] == 'S') chars[i] = '5';
-        if (chars[i] == 'B') chars[i] = '8';
-      }
-    }
-
-    return chars.join('');
-  }
+  /// Attempts character error correction for typical OCR confusion in license plates.
+  static String? attemptPlateCharacterCorrection(String raw) =>
+      PlateScannerService.attemptPlateCharacterCorrection(raw);
 }
