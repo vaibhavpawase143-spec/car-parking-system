@@ -26,9 +26,7 @@ void main() {
   );
 
   setUp(() {
-    VehicleEntryScreen.mockScanResult = null;
-    VehicleEntryScreen.mockCameraPermissionDenied = false;
-    VehicleEntryScreen.mockCapturedPhoto = null;
+    VehicleEntryScreen.resetTestMocks();
     PlateScannerService.resetMocks();
     PlateOcrService.resetMocks();
     WebCameraPlatform.resetMocks();
@@ -36,9 +34,7 @@ void main() {
   });
 
   tearDown(() {
-    VehicleEntryScreen.mockScanResult = null;
-    VehicleEntryScreen.mockCameraPermissionDenied = false;
-    VehicleEntryScreen.mockCapturedPhoto = null;
+    VehicleEntryScreen.resetTestMocks();
     PlateScannerService.resetMocks();
     PlateOcrService.resetMocks();
     WebCameraPlatform.resetMocks();
@@ -845,6 +841,163 @@ void main() {
 
       // Live OCR Status Banner is displayed right below the camera viewport
       expect(find.byKey(const ValueKey('live_ocr_status_banner')), findsOneWidget);
+    });
+
+    testWidgets('23. Web Camera Active: Displays web video preview, framing guide, and scanning status', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+        VehicleEntryScreen.resetTestMocks();
+        WebCameraPlatform.resetMocks();
+      });
+
+      VehicleEntryScreen.mockIsWeb = true;
+      WebCameraPlatform.mockStartStream = (viewId, {deviceId, preferredFacing}) async =>
+          CameraStartResult.success();
+      WebCameraPlatform.mockGetAvailableCameras = () async => [
+        CameraDeviceInfo(id: 'webcam-01', label: 'Integrated Camera HD', facing: CameraFacing.front),
+      ];
+      WebCameraPlatform.mockBuildCameraView = ({required viewId, required onReady}) =>
+          const SizedBox();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: VehicleEntryScreen(
+              currentGuard: testGuard,
+              onReturnDashboard: () {},
+              onViewActiveParking: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byKey(const ValueKey('web_camera_preview_view')), findsOneWidget);
+      expect(find.byKey(const ValueKey('number_plate_framing_guide')), findsOneWidget);
+      expect(find.byKey(const ValueKey('live_ocr_status_banner')), findsOneWidget);
+      expect(find.text(AppStrings.scanningForQrAndPlate), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(milliseconds: 100));
+    });
+
+    testWidgets('24. Web Camera Permission Denied: Displays clear permission denied card and disables active scanning status', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+        VehicleEntryScreen.resetTestMocks();
+        WebCameraPlatform.resetMocks();
+      });
+
+      VehicleEntryScreen.mockIsWeb = true;
+      WebCameraPlatform.mockStartStream = (viewId, {deviceId, preferredFacing}) async =>
+          CameraStartResult.failure('Camera access was denied by user.', 'NotAllowedError');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: VehicleEntryScreen(
+              currentGuard: testGuard,
+              onReturnDashboard: () {},
+              onViewActiveParking: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byKey(const ValueKey('camera_permission_denied_card')), findsOneWidget);
+      expect(find.text(AppStrings.cameraPermissionDeniedTitle), findsWidgets);
+      expect(find.byKey(const ValueKey('retry_permission_button')), findsOneWidget);
+      // Does NOT show active scanning banner when permission is denied
+      expect(find.byKey(const ValueKey('live_ocr_status_banner')), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(milliseconds: 100));
+    });
+
+    testWidgets('25. Web Camera No Device: Displays No Camera Detected card when no videoinput hardware is found', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+        VehicleEntryScreen.resetTestMocks();
+        WebCameraPlatform.resetMocks();
+      });
+
+      VehicleEntryScreen.mockIsWeb = true;
+      WebCameraPlatform.mockStartStream = (viewId, {deviceId, preferredFacing}) async =>
+          CameraStartResult.success();
+      WebCameraPlatform.mockGetAvailableCameras = () async => [];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: VehicleEntryScreen(
+              currentGuard: testGuard,
+              onReturnDashboard: () {},
+              onViewActiveParking: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byKey(const ValueKey('web_camera_no_device_card')), findsOneWidget);
+      expect(find.text('No Camera Detected'), findsWidgets);
+      expect(find.byKey(const ValueKey('retry_web_camera_button')), findsOneWidget);
+      expect(find.byKey(const ValueKey('live_ocr_status_banner')), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(milliseconds: 100));
+    });
+
+    testWidgets('26. Web Camera Initialization Failed: Displays Camera Initialization Failed card with retry button', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+        VehicleEntryScreen.resetTestMocks();
+        WebCameraPlatform.resetMocks();
+      });
+
+      VehicleEntryScreen.mockIsWeb = true;
+      WebCameraPlatform.mockStartStream = (viewId, {deviceId, preferredFacing}) async =>
+          CameraStartResult.failure('Camera device hardware failed to open.', 'NotReadableError');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: VehicleEntryScreen(
+              currentGuard: testGuard,
+              onReturnDashboard: () {},
+              onViewActiveParking: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byKey(const ValueKey('web_camera_init_failed_card')), findsOneWidget);
+      expect(find.text('Camera Initialization Failed'), findsWidgets);
+      expect(find.byKey(const ValueKey('retry_web_camera_init_button')), findsOneWidget);
+      expect(find.byKey(const ValueKey('live_ocr_status_banner')), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(milliseconds: 100));
     });
   });
 }

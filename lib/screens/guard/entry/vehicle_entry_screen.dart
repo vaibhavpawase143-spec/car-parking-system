@@ -23,6 +23,8 @@ import '../../../services/plate_scanner_service.dart';
 import '../../../services/settings_service.dart';
 import '../../../services/shift_service.dart';
 import '../../../widgets/camera/web_camera_dialog.dart';
+import '../../../widgets/camera/web_camera_stub.dart'
+    if (dart.library.html) '../../../widgets/camera/web_camera_html.dart';
 import '../../../widgets/common/app_button.dart';
 import '../../../widgets/common/app_text_field.dart';
 import '../../../widgets/common/status_badge.dart';
@@ -49,6 +51,7 @@ class VehicleEntryScreen extends StatefulWidget {
   static String? mockContinuousPlateCandidate;
   static int mockContinuousFrameCount = 2;
   static LiveCameraOcrService? mockLiveOcrService;
+  static bool? mockIsWeb;
 
   static void resetTestMocks() {
     mockScanResult = null;
@@ -57,6 +60,7 @@ class VehicleEntryScreen extends StatefulWidget {
     mockContinuousPlateCandidate = null;
     mockContinuousFrameCount = 2;
     mockLiveOcrService = null;
+    mockIsWeb = null;
     LiveCameraOcrService.resetMocks();
   }
 
@@ -94,6 +98,19 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
   bool _isTorchOn = false;
   bool _isProcessingFrame = false;
   DateTime _lastFrameProcessedTime = DateTime.fromMillisecondsSinceEpoch(0);
+
+  // Web Camera State
+  late final String _webCameraViewId = 'vehicle-entry-webcam-${DateTime.now().microsecondsSinceEpoch}';
+  bool _isWebCameraLoading = false;
+  bool _isWebCameraActive = false;
+  bool _isWebCameraNoDevice = false;
+  bool _isWebCameraInitFailed = false;
+  String _webCameraErrorMessage = '';
+  List<CameraDeviceInfo> _webAvailableCameras = [];
+  CameraDeviceInfo? _webCurrentCamera;
+  Timer? _webLiveScanTimer;
+
+  bool get _isWeb => VehicleEntryScreen.mockIsWeb ?? kIsWeb;
 
   // Scanning & Detection State
   String? _detectedQrPlate;
@@ -139,6 +156,7 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_isWeb) return;
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) return;
 
@@ -178,6 +196,9 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
       if (mounted) {
         setState(() {
           _isCameraPermissionDenied = true;
+          _isWebCameraLoading = false;
+          _isWebCameraActive = false;
+          _scannerStatusMessage = AppStrings.cameraPermissionDeniedTitle;
         });
       }
       return;
@@ -206,13 +227,8 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
       return;
     }
 
-    if (kIsWeb) {
-      if (mounted) {
-        setState(() {
-          _isCameraPermissionDenied = false;
-          _scannerStatusMessage = AppStrings.liveOcrUnsupportedNotice;
-        });
-      }
+    if (_isWeb) {
+      await _initWebCamera();
       return;
     }
 
@@ -252,6 +268,145 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
     }
   }
 
+  Future<void> _initWebCamera() async {
+    if (!mounted) return;
+    setState(() {
+      _isWebCameraLoading = true;
+      _isWebCameraActive = false;
+      _isCameraPermissionDenied = false;
+      _isWebCameraNoDevice = false;
+      _isWebCameraInitFailed = false;
+      _webCameraErrorMessage = '';
+      _scannerStatusMessage = 'Requesting camera permission...';
+    });
+
+    try {
+      final targetId = WebCameraPlatform.lastSelectedDeviceId;
+      final result = await WebCameraPlatform.startStream(
+        _webCameraViewId,
+        deviceId: targetId,
+        preferredFacing: CameraFacing.rear,
+      );
+
+      if (!mounted) return;
+
+      if (result.isSuccess) {
+        final cameras = await WebCameraPlatform.getAvailableCameras();
+        if (!mounted) return;
+
+        if (cameras.isEmpty) {
+          setState(() {
+            _isWebCameraLoading = false;
+            _isWebCameraActive = false;
+            _isWebCameraNoDevice = true;
+            _scannerStatusMessage = 'No camera hardware found on this device.';
+          });
+          return;
+        }
+
+        CameraDeviceInfo? activeCamera;
+        if (targetId != null) {
+          activeCamera = cameras.firstWhere(
+            (c) => c.id == targetId,
+            orElse: () => cameras.first,
+          );
+        } else {
+          activeCamera = cameras.first;
+        }
+
+        setState(() {
+          _isWebCameraLoading = false;
+          _isWebCameraActive = true;
+          _isWebCameraNoDevice = false;
+          _isWebCameraInitFailed = false;
+          _isCameraPermissionDenied = false;
+          _webAvailableCameras = cameras;
+          _webCurrentCamera = activeCamera;
+          _scannerStatusMessage = null;
+        });
+
+        _startWebLivePlateScanner();
+      } else {
+        final errCode = result.errorCode ?? '';
+        final errMsg = result.errorMessage ?? 'Camera initialization failed.';
+        final isDenied = errCode == 'NotAllowedError' ||
+            errMsg.toLowerCase().contains('denied') ||
+            errMsg.toLowerCase().contains('permission');
+        final isNotFound = errCode == 'NotFoundError' ||
+            errCode == 'NoVideoTrack' ||
+            errMsg.toLowerCase().contains('not found') ||
+            errMsg.toLowerCase().contains('no camera');
+
+        setState(() {
+          _isWebCameraLoading = false;
+          _isWebCameraActive = false;
+          if (isDenied) {
+            _isCameraPermissionDenied = true;
+            _scannerStatusMessage = AppStrings.cameraPermissionDeniedTitle;
+          } else if (isNotFound) {
+            _isWebCameraNoDevice = true;
+            _scannerStatusMessage = 'No camera hardware found on this device.';
+          } else {
+            _isWebCameraInitFailed = true;
+            _webCameraErrorMessage = errMsg;
+            _scannerStatusMessage = 'Camera initialization failed: $errMsg';
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('[VehicleEntry WebCamera] Initialization error: $e');
+      if (mounted) {
+        setState(() {
+          _isWebCameraLoading = false;
+          _isWebCameraActive = false;
+          _isWebCameraInitFailed = true;
+          _webCameraErrorMessage = e.toString();
+          _scannerStatusMessage = 'Camera initialization failed';
+        });
+      }
+    }
+  }
+
+  void _startWebLivePlateScanner() {
+    _webLiveScanTimer?.cancel();
+    _webLiveScanTimer = Timer.periodic(const Duration(milliseconds: 750), (_) async {
+      if (!mounted || !_isWebCameraActive || _isCameraPermissionDenied || _detectedOcrPlate != null) {
+        return;
+      }
+      try {
+        // 1. Scan QR from active web video stream
+        final qrCode = await WebCameraPlatform.scanQrFromVideo(_webCameraViewId);
+        if (qrCode != null && qrCode.isNotEmpty && mounted) {
+          _handleBarcodeCaptureFromLive(PlateScanResult(
+            plateNumber: qrCode,
+            confidence: 1.0,
+            isQr: true,
+          ));
+          return;
+        }
+
+        // 2. Scan OCR Plate from current video frame
+        final frameBytes = await WebCameraPlatform.captureFrame(_webCameraViewId);
+        if (frameBytes != null && frameBytes.isNotEmpty) {
+          final evaluated = await PlateOcrService.recognizePlate(imageBytes: frameBytes);
+          if (evaluated.hasPlate && mounted) {
+            final stable = _liveOcrService.stabilityTracker.addCandidate(evaluated.plateNumber!);
+            if (stable != null) {
+              _handleLivePlateDetected(stable, evaluated.confidence);
+              if (_platePhotoBytes == null) {
+                setState(() {
+                  _platePhotoBytes = frameBytes;
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[VehicleEntry WebOCR] Frame evaluation error: $e');
+      }
+    });
+  }
+
   Future<void> _initCameraControllerOnly() async {
     if (_availableCameras.isEmpty) return;
     try {
@@ -277,6 +432,7 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
   }
 
   Future<void> _startImageStream() async {
+    if (_isWeb) return;
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) return;
     if (controller.value.isStreamingImages) return;
@@ -306,8 +462,14 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
   }
 
   Future<void> _disposeScanner() async {
-    await _disposeCameraControllerOnly();
-    await _liveOcrService.dispose();
+    _webLiveScanTimer?.cancel();
+    _webLiveScanTimer = null;
+    if (_isWeb) {
+      WebCameraPlatform.stopStream(_webCameraViewId);
+    } else {
+      await _disposeCameraControllerOnly();
+      await _liveOcrService.dispose();
+    }
   }
 
   Future<void> _toggleTorch() async {
@@ -328,6 +490,25 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
   }
 
   Future<void> _switchCamera() async {
+    if (_isWeb) {
+      if (_webAvailableCameras.length < 2) return;
+      final currentIndex = _webAvailableCameras.indexWhere((c) => c.id == _webCurrentCamera?.id);
+      final nextIndex = (currentIndex + 1) % _webAvailableCameras.length;
+      final nextCamera = _webAvailableCameras[nextIndex];
+
+      final success = await WebCameraPlatform.switchCamera(
+        _webCameraViewId,
+        targetDeviceId: nextCamera.id,
+        facing: nextCamera.facing,
+      );
+      if (success && mounted) {
+        setState(() {
+          _webCurrentCamera = nextCamera;
+        });
+      }
+      return;
+    }
+
     if (_availableCameras.length < 2) return;
     _selectedCameraIndex = (_selectedCameraIndex + 1) % _availableCameras.length;
     await _disposeCameraControllerOnly();
@@ -342,6 +523,8 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
     PlateScannerService.mockPermissionDenied = false;
     setState(() {
       _isCameraPermissionDenied = false;
+      _isWebCameraInitFailed = false;
+      _isWebCameraNoDevice = false;
       _errorMessage = null;
     });
     _disposeScanner().then((_) => _initScanner());
@@ -574,7 +757,7 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
       Uint8List? photoBytes;
       String? photoPath;
 
-      if (kIsWeb) {
+      if (_isWeb) {
         final captured = await WebCameraDialog.show(context);
         if (captured == null || captured.isEmpty) {
           return;
@@ -785,7 +968,18 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
   // ---------------------------------------------------------------------------
 
   Future<void> _capturePlatePhoto() async {
-    if (kIsWeb) {
+    if (_isWeb) {
+      if (_isWebCameraActive) {
+        final captured = await WebCameraPlatform.captureFrame(_webCameraViewId);
+        if (captured != null && captured.isNotEmpty) {
+          setState(() {
+            _platePhotoBytes = captured;
+            _errorMessage = null;
+          });
+          return;
+        }
+      }
+      if (!mounted) return;
       final captured = await WebCameraDialog.show(
         context,
         isPlateScanning: true,
@@ -818,7 +1012,7 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
   }
 
   Future<void> _captureVehiclePhoto() async {
-    if (kIsWeb) {
+    if (_isWeb) {
       final captured = await WebCameraDialog.show(context);
       if (captured != null && captured.isNotEmpty) {
         setState(() {
@@ -1148,6 +1342,11 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
   // ---------------------------------------------------------------------------
 
   Widget _buildCameraAndScanningSection({required bool compact}) {
+    final isScanningVisible = (_detectedQrPlate != null || _detectedOcrPlate != null) ||
+        (_isScanningActive &&
+            !_isCameraPermissionDenied &&
+            (!_isWeb || _isWebCameraActive));
+
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -1184,7 +1383,7 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
             const SizedBox(height: 10),
 
             // Live OCR Scanning Status Banner
-            if (_isScanningActive && !_isCameraPermissionDenied) ...[
+            if (isScanningVisible) ...[
               Container(
                 key: const ValueKey('live_ocr_status_banner'),
                 width: double.infinity,
@@ -1243,7 +1442,7 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
               children: [
                 IconButton.filledTonal(
                   key: const ValueKey('toggle_torch_button'),
-                  onPressed: (_cameraController != null && _cameraController!.value.isInitialized)
+                  onPressed: (!_isWeb && _cameraController != null && _cameraController!.value.isInitialized)
                       ? _toggleTorch
                       : null,
                   icon: Icon(_isTorchOn ? Icons.flash_on : Icons.flash_off, size: 20),
@@ -1251,7 +1450,11 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
                 ),
                 IconButton.filledTonal(
                   key: const ValueKey('switch_camera_button'),
-                  onPressed: _availableCameras.length > 1 ? _switchCamera : null,
+                  onPressed: (_isWeb
+                          ? _webAvailableCameras.length > 1
+                          : _availableCameras.length > 1)
+                      ? _switchCamera
+                      : null,
                   icon: const Icon(Icons.flip_camera_ios, size: 20),
                   tooltip: 'Switch Camera',
                 ),
@@ -1270,11 +1473,15 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
                       _scannerStatusMessage = null;
                       _isPlateConfirmed = false;
                     });
-                    final controller = _cameraController;
-                    if (controller != null &&
-                        controller.value.isInitialized &&
-                        !controller.value.isStreamingImages) {
-                      _startImageStream();
+                    if (_isWeb) {
+                      _startWebLivePlateScanner();
+                    } else {
+                      final controller = _cameraController;
+                      if (controller != null &&
+                          controller.value.isInitialized &&
+                          !controller.value.isStreamingImages) {
+                        _startImageStream();
+                      }
                     }
                   },
                   icon: const Icon(Icons.refresh, size: 16),
@@ -1309,6 +1516,26 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
         return StatusBadge(label: AppStrings.plateDetectedHighConfidence, type: BadgeType.active);
       } else {
         return StatusBadge(label: AppStrings.plateDetectedLowConfidence, type: BadgeType.warning);
+      }
+    }
+    if (_isWeb) {
+      if (_isWebCameraNoDevice) {
+        return const StatusBadge(label: 'No Camera Detected', type: BadgeType.danger);
+      }
+      if (_isWebCameraInitFailed) {
+        return const StatusBadge(label: 'Camera Error', type: BadgeType.danger);
+      }
+      if (_isWebCameraLoading) {
+        return const StatusBadge(label: 'Requesting Camera...', type: BadgeType.warning);
+      }
+      if (!_isWebCameraActive) {
+        return const StatusBadge(label: 'Camera Inactive', type: BadgeType.warning);
+      }
+    } else {
+      if ((_cameraController == null || !_cameraController!.value.isInitialized) &&
+          VehicleEntryScreen.mockScanResult == null &&
+          VehicleEntryScreen.mockContinuousPlateCandidate == null) {
+        return const StatusBadge(label: 'Initializing Camera...', type: BadgeType.warning);
       }
     }
     if (_liveOcrService.stabilityTracker.hasPendingCandidate) {
@@ -1359,8 +1586,117 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
       );
     }
 
+    if (_isWeb && _isWebCameraNoDevice) {
+      return Container(
+        key: const ValueKey('web_camera_no_device_card'),
+        width: double.infinity,
+        height: height,
+        decoration: BoxDecoration(
+          color: AppColors.surfaceVariant,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.border),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.videocam_off_outlined, size: 40, color: AppColors.textSecondary),
+            const SizedBox(height: 10),
+            const Text(
+              'No Camera Detected',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'No webcam or camera hardware was found on this device.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              key: const ValueKey('retry_web_camera_button'),
+              onPressed: _retryCameraPermission,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Retry Camera'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_isWeb && _isWebCameraInitFailed) {
+      return Container(
+        key: const ValueKey('web_camera_init_failed_card'),
+        width: double.infinity,
+        height: height,
+        decoration: BoxDecoration(
+          color: AppColors.dangerLight,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.danger),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 40, color: AppColors.dangerDark),
+            const SizedBox(height: 10),
+            const Text(
+              'Camera Initialization Failed',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.dangerDark),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _webCameraErrorMessage.isNotEmpty
+                  ? _webCameraErrorMessage
+                  : 'Unable to connect to the camera stream.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              key: const ValueKey('retry_web_camera_init_button'),
+              onPressed: _retryCameraPermission,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Retry Camera'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_isWeb && _isWebCameraLoading) {
+      return Container(
+        key: const ValueKey('web_camera_loading_card'),
+        width: double.infinity,
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: AppColors.primaryLight),
+              SizedBox(height: 12),
+              Text(
+                'Requesting camera permission...',
+                style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              SizedBox(height: 4),
+              Text(
+                'Please allow camera access in your browser prompt.',
+                style: TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final controller = _cameraController;
-    final isInitialized = controller != null && controller.value.isInitialized;
+    final isMobileInitialized = !_isWeb && controller != null && controller.value.isInitialized;
+    final isStreamActive = _isWeb ? _isWebCameraActive : isMobileInitialized;
 
     return Container(
       width: double.infinity,
@@ -1375,7 +1711,19 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
           alignment: Alignment.center,
           children: [
             // Camera Stream Preview
-            if (isInitialized)
+            if (_isWeb && _isWebCameraActive)
+              SizedBox.expand(
+                key: const ValueKey('web_camera_preview_view'),
+                child: WebCameraPlatform.buildCameraView(
+                  viewId: _webCameraViewId,
+                  onReady: () {
+                    if (mounted && !_isWebCameraActive) {
+                      setState(() => _isWebCameraActive = true);
+                    }
+                  },
+                ),
+              )
+            else if (isMobileInitialized)
               SizedBox.expand(
                 child: FittedBox(
                   fit: BoxFit.cover,
@@ -1436,13 +1784,25 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
                       textAlign: TextAlign.center,
                     ),
                   ),
-                  // Horizontal alignment laser line
-                  Container(
-                    height: 2,
-                    margin: const EdgeInsets.symmetric(horizontal: 12),
-                    color: AppColors.primary.withValues(alpha: 0.8),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      _hasConflict
+                          ? 'Plate Conflict Detected'
+                          : (_detectedQrPlate != null || _detectedOcrPlate != null
+                              ? 'Plate Detected'
+                              : (isStreamActive ? 'Align Plate / QR' : 'Waiting for Camera...')),
+                      style: TextStyle(
+                        color: _hasConflict
+                            ? AppColors.dangerLight
+                            : (_detectedQrPlate != null || _detectedOcrPlate != null
+                                ? AppColors.successLight
+                                : Colors.white70),
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 2),
                 ],
               ),
             ),

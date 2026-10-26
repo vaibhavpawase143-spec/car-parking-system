@@ -39,11 +39,13 @@ class WebCameraPlatform {
       ..style.width = '100%'
       ..style.height = '100%'
       ..style.objectFit = 'cover'
+      ..style.display = 'block'
       ..style.transform = 'scaleX(1)';
 
     videoElement.setAttribute('playsinline', 'true');
     videoElement.setAttribute('webkit-playsinline', 'true');
     videoElement.setAttribute('muted', 'true');
+    videoElement.setAttribute('autoplay', 'true');
 
     // Register factory for Flutter HtmlElementView
     ui_web.platformViewRegistry.registerViewFactory(
