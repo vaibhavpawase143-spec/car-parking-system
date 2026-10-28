@@ -76,7 +76,7 @@ class SystemSettingsModel {
     this.vehiclePhotoVisible = true,
     this.requireVehiclePhoto = false,
     this.customerMobileVisible = true,
-    this.requireCustomerMobile = true,
+    this.requireCustomerMobile = false,
   });
 
   factory SystemSettingsModel.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -140,7 +140,7 @@ class SystemSettingsModel {
       vehiclePhotoVisible: data['vehiclePhotoVisible'] as bool? ?? true,
       requireVehiclePhoto: data['requireVehiclePhoto'] as bool? ?? false,
       customerMobileVisible: data['customerMobileVisible'] as bool? ?? true,
-      requireCustomerMobile: data['requireCustomerMobile'] as bool? ?? true,
+      requireCustomerMobile: data['requireCustomerMobile'] as bool? ?? false,
     );
   }
 

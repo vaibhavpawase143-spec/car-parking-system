@@ -19,6 +19,20 @@ class WhatsAppService {
     return RegExp(r'^[6-9]\d{9}$').hasMatch(trimmed);
   }
 
+  /// Checks whether a customer mobile number is present (non-null, non-empty,
+  /// and not only whitespace).
+  static bool hasCustomerMobile(String? mobile) {
+    if (mobile == null) return false;
+    return mobile.trim().isNotEmpty;
+  }
+
+  /// Checks whether a customer mobile number is present and valid according
+  /// to Indian 10-digit mobile number specifications.
+  static bool hasValidCustomerMobile(String? mobile) {
+    if (!hasCustomerMobile(mobile)) return false;
+    return isValidCustomerMobile(mobile!.trim());
+  }
+
   /// Builds the customer-friendly entry confirmation message using exact slip details.
   static String buildEntryMessage(ParkingRecord record, {AppLanguage? language}) =>
       buildEntryConfirmationMessage(record, language: language);
@@ -68,15 +82,15 @@ $qrRef''';
   }
 
   /// Builds the wa.me click-to-chat URL with country code 91, customer mobile, and encoded message.
+  /// Returns empty string if customer mobile is missing, blank, or invalid.
   static String buildClickToChatUrl(ParkingRecord record, {AppLanguage? language}) {
+    final mobile = record.customerMobile.trim();
+    if (!hasCustomerMobile(mobile) || !isValidCustomerMobile(mobile)) {
+      return '';
+    }
     final message = buildEntryConfirmationMessage(record, language: language);
     final encodedMsg = Uri.encodeComponent(message);
-    final mobile = record.customerMobile.trim();
-
-    if (isValidCustomerMobile(mobile)) {
-      return 'https://wa.me/91$mobile?text=$encodedMsg';
-    }
-    return 'https://wa.me/?text=$encodedMsg';
+    return 'https://wa.me/91$mobile?text=$encodedMsg';
   }
 
   /// Opens the WhatsApp direct click-to-chat URL in an external application / browser.
@@ -85,7 +99,7 @@ $qrRef''';
   /// WhatsApp failure never affects or rolls back the parking record.
   static Future<bool> openWhatsApp(BuildContext context, ParkingRecord record) async {
     final mobile = record.customerMobile.trim();
-    if (!isValidCustomerMobile(mobile)) {
+    if (!hasCustomerMobile(mobile) || !isValidCustomerMobile(mobile)) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -98,6 +112,7 @@ $qrRef''';
     }
 
     final url = buildClickToChatUrl(record);
+    if (url.isEmpty) return false;
     try {
       final uri = Uri.parse(url);
       final canLaunch = await canLaunchUrl(uri);
@@ -203,21 +218,21 @@ Thank you for using CAR PARKING SYSTEM.''';
   }
 
   /// Builds the wa.me click-to-chat URL with country code 91, customer mobile, and encoded exit message.
+  /// Returns empty string if customer mobile is missing, blank, or invalid.
   static String buildExitClickToChatUrl(ParkingRecord record, {AppLanguage? language}) {
+    final mobile = record.customerMobile.trim();
+    if (!hasValidCustomerMobile(mobile)) {
+      return '';
+    }
     final message = buildExitConfirmationMessage(record, language: language);
     final encodedMsg = Uri.encodeComponent(message);
-    final mobile = record.customerMobile.trim();
-
-    if (isValidCustomerMobile(mobile)) {
-      return 'https://wa.me/91$mobile?text=$encodedMsg';
-    }
-    return 'https://wa.me/?text=$encodedMsg';
+    return 'https://wa.me/91$mobile?text=$encodedMsg';
   }
 
   /// Opens the exit WhatsApp direct click-to-chat URL in an external application / browser.
   static Future<bool> openExitWhatsApp(BuildContext context, ParkingRecord record) async {
     final mobile = record.customerMobile.trim();
-    if (!isValidCustomerMobile(mobile)) {
+    if (!hasValidCustomerMobile(mobile)) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -230,6 +245,7 @@ Thank you for using CAR PARKING SYSTEM.''';
     }
 
     final url = buildExitClickToChatUrl(record);
+    if (url.isEmpty) return false;
     try {
       final uri = Uri.parse(url);
       final canLaunch = await canLaunchUrl(uri);
@@ -322,14 +338,12 @@ CAR PARKING SYSTEM''';
   /// Opens direct WhatsApp click-to-chat with text-only pass confirmation.
   static Future<bool> shareMonthlyPassConfirmation(MonthlyPassModel pass, {AppLanguage? language}) async {
     final mobile = pass.customerMobile.trim();
+    if (!hasValidCustomerMobile(mobile)) {
+      return false;
+    }
     final message = buildMonthlyPassMessage(pass, language: language);
     final encoded = Uri.encodeComponent(message);
-    String url;
-    if (isValidCustomerMobile(mobile)) {
-      url = 'https://wa.me/91$mobile?text=$encoded';
-    } else {
-      url = 'https://wa.me/?text=$encoded';
-    }
+    final url = 'https://wa.me/91$mobile?text=$encoded';
     final uri = Uri.parse(url);
     return await launchUrl(uri, mode: LaunchMode.externalApplication);
   }

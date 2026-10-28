@@ -472,7 +472,9 @@ class ReceiptPlatformPrinter {
     _addEscPosRow(bytes, generator, 'Advance Paid:', advancePaid);
     _addEscPosRow(bytes, generator, 'Payment:', advanceMethod);
     _addEscPosRow(bytes, generator, 'Status:', 'ACTIVE');
-    _addEscPosRow(bytes, generator, 'Mandatory Photo:', 'CAPTURED');
+    if (record.photoUrl != null && record.photoUrl!.isNotEmpty) {
+      _addEscPosRow(bytes, generator, 'Photo:', 'CAPTURED');
+    }
     bytes.addAll(generator.hr());
 
     // Footer

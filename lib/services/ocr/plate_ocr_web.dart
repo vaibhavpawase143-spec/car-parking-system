@@ -1,15 +1,13 @@
 // ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
 import 'dart:async';
 import 'dart:convert';
-import 'dart:html' as html;
 import 'dart:js' as js;
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import '../plate_scanner_service.dart';
 
 /// Genuine Web implementation for OCR number plate recognition.
-/// Uses browser hardware-accelerated TextDetector when available in Chromium,
-/// falls back to in-browser Tesseract.js, or reads image text data.
+/// Uses in-browser ocrBridge (Chromium TextDetector and/or Tesseract.js worker).
 class PlateOcrPlatform {
   PlateOcrPlatform._();
 
@@ -53,11 +51,12 @@ class PlateOcrPlatform {
         }
       }
 
-      // 3. Try native browser Shape Detection API (window.TextDetector)
-      final textDetectorText = await _recognizeWithTextDetector(imageBytes);
-      if (textDetectorText != null && textDetectorText.isNotEmpty) {
+      // 3. Try In-Browser OCR via window.ocrBridge (TextDetector + Tesseract.js)
+      final bridgeText = await _recognizeViaBridge(imageBytes);
+      if (bridgeText != null && bridgeText.trim().isNotEmpty) {
+        debugPrint('[PlateOcr Web] Bridge recognized raw text: "$bridgeText"');
         final evaluated = PlateScannerService.evaluateOcr(
-          detectedText: textDetectorText,
+          detectedText: bridgeText,
           photoBytes: imageBytes,
         );
         if (evaluated.hasPlate) {
@@ -65,28 +64,15 @@ class PlateOcrPlatform {
         }
       }
 
-      // 4. Try in-browser Tesseract.js (window.Tesseract)
-      final tesseractText = await _recognizeWithTesseract(imageBytes);
-      if (tesseractText != null && tesseractText.isNotEmpty) {
-        final evaluated = PlateScannerService.evaluateOcr(
-          detectedText: tesseractText,
-          photoBytes: imageBytes,
-        );
-        if (evaluated.hasPlate) {
-          return evaluated;
-        }
-      }
-
-      // If text was detected but didn't form a plate candidate:
-      final rawAny = textDetectorText ?? tesseractText ?? embeddedText;
+      final rawAny = bridgeText ?? embeddedText;
       return PlateScanResult(
         isOcr: true,
         confidence: 0.20,
         rawData: rawAny,
         photoBytes: imageBytes,
-        errorMessage: rawAny != null && rawAny.isNotEmpty
-            ? 'Text found but no valid Indian vehicle plate recognized.'
-            : 'Number plate could not be recognized. Please align plate in frame.',
+        errorMessage: (rawAny != null && rawAny.isNotEmpty)
+            ? 'Text found ("$rawAny") but no valid Indian registration plate recognized.'
+            : 'Number plate could not be recognized. Please hold plate in frame.',
       );
     } catch (e) {
       debugPrint('[PlateOcr Web] Recognition error: $e');
@@ -99,6 +85,45 @@ class PlateOcrPlatform {
     }
   }
 
+  static int _requestCounter = 0;
+
+  /// Recognizes text by passing a base64 JPEG to window.ocrBridge.
+  static Future<String?> _recognizeViaBridge(Uint8List imageBytes) async {
+    try {
+      if (!js.context.hasProperty('ocrBridge')) {
+        debugPrint('[WebOCR] window.ocrBridge not available');
+        return null;
+      }
+
+      final ocrBridge = js.context['ocrBridge'] as js.JsObject?;
+      if (ocrBridge == null) return null;
+
+      final reqId = 'ocr_${++_requestCounter}_${DateTime.now().millisecondsSinceEpoch}';
+      final base64Url = 'data:image/jpeg;base64,${base64Encode(imageBytes)}';
+
+      if (ocrBridge.hasProperty('startRecognize') && ocrBridge.hasProperty('checkResult')) {
+        ocrBridge.callMethod('startRecognize', [reqId, base64Url]);
+
+        // Poll checkResult in JS every 40ms for up to 3.5 seconds
+        const pollInterval = Duration(milliseconds: 40);
+        const maxAttempts = 88; // 88 * 40ms = ~3.5s
+
+        for (int i = 0; i < maxAttempts; i++) {
+          await Future.delayed(pollInterval);
+
+          final result = ocrBridge.callMethod('checkResult', [reqId]);
+          if (result != null) {
+            final str = result.toString().trim();
+            return str.isNotEmpty ? str : null;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[PlateOcr Web] _recognizeViaBridge notice: $e');
+    }
+    return null;
+  }
+
   /// Extracts textual metadata from image bytes (e.g. PNG text chunks).
   static String? _extractTextFromImageBytes(Uint8List imageBytes) {
     try {
@@ -108,57 +133,6 @@ class PlateOcrPlatform {
         if (vals.trim().isNotEmpty) return vals.trim();
       }
     } catch (_) {}
-    return null;
-  }
-
-  /// Recognizes text using Chromium's native Shape Detection API (window.TextDetector).
-  static Future<String?> _recognizeWithTextDetector(Uint8List imageBytes) async {
-    if (!js.context.hasProperty('TextDetector')) return null;
-    try {
-      final base64Url = 'data:image/jpeg;base64,${base64Encode(imageBytes)}';
-      final imgElement = html.ImageElement(src: base64Url);
-      await imgElement.onLoad.first;
-
-      final detectorClass = js.context['TextDetector'] as js.JsFunction;
-      final detector = js.JsObject(detectorClass);
-      final promise = detector.callMethod('detect', [imgElement]);
-      final detected = await (promise as Future<dynamic>);
-      final list = detected as List<dynamic>?;
-      if (list != null && list.isNotEmpty) {
-        final lines = <String>[];
-        for (final item in list) {
-          final raw = (item as dynamic)['rawValue'] as String?;
-          if (raw != null && raw.trim().isNotEmpty) {
-            lines.add(raw.trim());
-          }
-        }
-        if (lines.isNotEmpty) {
-          return lines.join('\n');
-        }
-      }
-    } catch (e) {
-      debugPrint('[PlateOcr Web] TextDetector notice: $e');
-    }
-    return null;
-  }
-
-  /// Recognizes text using in-browser Tesseract.js (window.Tesseract).
-  static Future<String?> _recognizeWithTesseract(Uint8List imageBytes) async {
-    if (!js.context.hasProperty('Tesseract')) return null;
-    try {
-      final base64Url = 'data:image/jpeg;base64,${base64Encode(imageBytes)}';
-      final tesseract = js.context['Tesseract'];
-      final promise = tesseract.callMethod('recognize', [
-        base64Url,
-        'eng',
-      ]);
-      final result = await (promise as Future<dynamic>);
-      final data = (result as dynamic)['data'];
-      final text = (data as dynamic)['text'] as String?;
-      return text?.trim();
-    } catch (e) {
-      debugPrint('[PlateOcr Web] Tesseract notice: $e');
-    }
     return null;
   }
 }

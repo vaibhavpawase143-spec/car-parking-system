@@ -298,7 +298,12 @@ class WebCameraPlatform {
   static Future<Uint8List?> Function(String viewId)? mockCaptureFrame;
 
   /// Captures current video frame from the active camera stream.
-  static Future<Uint8List?> captureFrame(String viewId) async {
+  /// If [cropToFramingGuide] is true, extracts the centered region corresponding
+  /// to the framing guide overlay, significantly accelerating OCR and boosting accuracy.
+  static Future<Uint8List?> captureFrame(
+    String viewId, {
+    bool cropToFramingGuide = false,
+  }) async {
     if (mockCaptureFrame != null) {
       return await mockCaptureFrame!(viewId);
     }
@@ -313,14 +318,37 @@ class WebCameraPlatform {
       return null;
     }
 
-    final w = video.videoWidth;
-    final h = video.videoHeight;
+    final vw = video.videoWidth;
+    final vh = video.videoHeight;
 
-    final canvas = html.CanvasElement(width: w, height: h);
+    int sx = 0, sy = 0, sw = vw, sh = vh;
+    if (cropToFramingGuide && vw >= 480 && vh >= 320) {
+      // Matches the significantly enlarged framing guide (approximately 95% width, 65-70% height)
+      // to focus OCR strictly on the plate area inside the green box.
+      sw = (vw * 0.95).toInt();
+      sh = (vh * 0.68).toInt();
+      sx = (vw - sw) ~/ 2;
+      sy = (vh - sh) ~/ 2;
+    }
+
+    // Scale to optimal OCR width (~960px max) for high clarity and fast recognition
+    int outW = sw;
+    int outH = sh;
+    if (outW > 960) {
+      final scale = 960.0 / outW;
+      outW = 960;
+      outH = (sh * scale).round();
+    }
+
+    final canvas = html.CanvasElement(width: outW, height: outH);
     final ctx = canvas.context2D;
-    ctx.drawImage(video, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    try {
+      (ctx as dynamic).filter = 'contrast(1.15) brightness(1.05)';
+    } catch (_) {}
+    ctx.drawImageScaledFromSource(video, sx, sy, sw, sh, 0, 0, outW, outH);
 
-    final dataUrl = canvas.toDataUrl('image/jpeg', 0.85);
+    final dataUrl = canvas.toDataUrl('image/jpeg', 0.90);
     final commaIndex = dataUrl.indexOf(',');
     if (commaIndex != -1) {
       final base64Str = dataUrl.substring(commaIndex + 1);

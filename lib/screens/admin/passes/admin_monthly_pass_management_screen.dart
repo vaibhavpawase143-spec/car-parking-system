@@ -612,7 +612,7 @@ class _AdminMonthlyPassManagementScreenState extends State<AdminMonthlyPassManag
                 onPressed: () => _printPassReceipt(pass),
               );
 
-              final hasMobile = pass.customerMobile.trim().isNotEmpty;
+              final hasMobile = WhatsAppService.hasCustomerMobile(pass.customerMobile);
               final whatsAppBtn = hasMobile
                   ? OutlinedButton.icon(
                       icon: const Icon(Icons.chat, size: 16, color: AppColors.success),

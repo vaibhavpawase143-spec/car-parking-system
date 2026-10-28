@@ -146,7 +146,7 @@ class _EntrySlipScreenState extends State<EntrySlipScreen> {
 
   Future<void> _handleSendWhatsApp() async {
     final mobile = record.customerMobile.trim();
-    if (!WhatsAppService.isValidCustomerMobile(mobile)) {
+    if (!WhatsAppService.hasValidCustomerMobile(mobile)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(AppStrings.invalidMobile),
@@ -407,8 +407,8 @@ class _EntrySlipScreenState extends State<EntrySlipScreen> {
                       ),
                     ),
 
-                    // Action: Send WhatsApp (ONLY visible after successful print)
-                    if (_isPrintSuccessful) ...[
+                    // Action: Send WhatsApp (ONLY visible after successful print AND when customer mobile is present)
+                    if (_isPrintSuccessful && WhatsAppService.hasCustomerMobile(record.customerMobile)) ...[
                       const SizedBox(height: 12),
                       ElevatedButton.icon(
                         key: const ValueKey('slip_send_whatsapp_button'),

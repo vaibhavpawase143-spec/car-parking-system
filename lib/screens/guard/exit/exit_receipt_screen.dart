@@ -219,15 +219,17 @@ class ExitReceiptScreen extends StatelessWidget {
                     StatusBadge(label: AppStrings.settledAndExited, type: BadgeType.exited),
                     const SizedBox(height: 20),
 
-                    // Send WhatsApp Exit Receipt
-                    AppButton(
-                      key: const ValueKey('exit_send_whatsapp_button'),
-                      label: AppStrings.sendWhatsApp,
-                      icon: Icons.chat,
-                      type: AppButtonType.secondary,
-                      onPressed: () => WhatsAppService.openExitWhatsApp(context, record),
-                    ),
-                    const SizedBox(height: 12),
+                    // Send WhatsApp Exit Receipt (ONLY visible when customer mobile is present)
+                    if (WhatsAppService.hasCustomerMobile(record.customerMobile)) ...[
+                      AppButton(
+                        key: const ValueKey('exit_send_whatsapp_button'),
+                        label: AppStrings.sendWhatsApp,
+                        icon: Icons.chat,
+                        type: AppButtonType.secondary,
+                        onPressed: () => WhatsAppService.openExitWhatsApp(context, record),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
 
                     // Print Exit Receipt (58mm Thermal)
                     AppButton(

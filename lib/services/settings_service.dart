@@ -32,6 +32,8 @@ class SettingsService {
 
   bool _initialized = false;
   StreamSubscription? _sub;
+  final StreamController<SystemSettingsModel> _settingsStreamController =
+      StreamController<SystemSettingsModel>.broadcast();
 
   /// Initializes the settings service and starts listening for Firestore updates.
   Future<void> init() async {
@@ -41,6 +43,9 @@ class SettingsService {
       if (doc.exists && doc.data() != null) {
         _current = SystemSettingsModel.fromFirestore(doc);
         _syncToBusinessProfile(_current);
+        if (!_settingsStreamController.isClosed) {
+          _settingsStreamController.add(_current);
+        }
       }
     } catch (e) {
       debugPrint('[SettingsService] Failed to load initial settings: $e');
@@ -48,36 +53,34 @@ class SettingsService {
       _initialized = true;
     }
 
-    _sub = watchSettings().listen((settings) {
-      _current = settings;
-      _syncToBusinessProfile(settings);
-    }, onError: (e) {
-      debugPrint('[SettingsService] Snapshot error on system_config: $e');
-    });
-  }
-
-  /// Real-time stream of dynamic system settings.
-  Stream<SystemSettingsModel> watchSettings() {
     try {
-      return _firestore
+      _sub = _firestore
           .collection('settings')
           .doc('system_config')
           .snapshots()
-          .map((snapshot) {
+          .listen((snapshot) {
         if (!snapshot.exists || snapshot.data() == null) {
-          return const SystemSettingsModel();
+          _current = const SystemSettingsModel();
+        } else {
+          _current = SystemSettingsModel.fromFirestore(snapshot);
         }
-        final s = SystemSettingsModel.fromFirestore(snapshot);
-        _current = s;
-        _syncToBusinessProfile(s);
-        return s;
-      }).handleError((e) {
-        debugPrint('[SettingsService] Error watching settings: $e');
-        return _current;
+        _syncToBusinessProfile(_current);
+        if (!_settingsStreamController.isClosed) {
+          _settingsStreamController.add(_current);
+        }
+      }, onError: (e) {
+        debugPrint('[SettingsService] Snapshot error on system_config: $e');
       });
-    } catch (_) {
-      return Stream.value(_current);
+    } catch (e) {
+      debugPrint('[SettingsService] Error starting snapshots listener: $e');
     }
+  }
+
+  /// Real-time stream of dynamic system settings.
+  /// Yields current cached settings immediately followed by all live updates.
+  Stream<SystemSettingsModel> watchSettings() async* {
+    yield _current;
+    yield* _settingsStreamController.stream;
   }
 
   /// Saves updated system configuration and records an audit log.
@@ -107,6 +110,9 @@ class SettingsService {
 
     _current = settings;
     _syncToBusinessProfile(settings);
+    if (!_settingsStreamController.isClosed) {
+      _settingsStreamController.add(settings);
+    }
 
     // Audit log
     await _auditService.logAction(
@@ -214,7 +220,17 @@ class SettingsService {
     } catch (_) {}
   }
 
+  @visibleForTesting
+  void setMockSettings(SystemSettingsModel settings) {
+    _current = settings;
+    _syncToBusinessProfile(settings);
+    if (!_settingsStreamController.isClosed) {
+      _settingsStreamController.add(settings);
+    }
+  }
+
   void dispose() {
     _sub?.cancel();
+    _settingsStreamController.close();
   }
 }

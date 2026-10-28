@@ -57,7 +57,7 @@ class WebCameraPlatform {
     return false;
   }
 
-  static Future<Uint8List?> captureFrame(String viewId) async {
+  static Future<Uint8List?> captureFrame(String viewId, {bool cropToFramingGuide = false}) async {
     if (mockCaptureFrame != null) {
       return await mockCaptureFrame!(viewId);
     }

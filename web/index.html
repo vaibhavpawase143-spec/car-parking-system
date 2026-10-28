@@ -41,10 +41,156 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
-  <!-- High-performance in-browser QR decoding library -->
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-  <!-- In-browser OCR library for Web camera optical plate recognition -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <!-- High-performance in-browser QR decoding library (local with CDN fallback) -->
+  <script src="jsQR.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';document.head.appendChild(s);"></script>
+  <!-- In-browser OCR library for Web camera optical plate recognition (local with CDN fallback) -->
+  <script src="tesseract.min.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';document.head.appendChild(s);"></script>
+  <script>
+    // Global In-Browser OCR Bridge for Live Vehicle Number Plate Recognition
+    window.ocrBridge = {
+      isReady: false,
+      isInitializing: false,
+      lastError: null,
+      worker: null,
+      workerPromise: null,
+      pendingResults: {},
+
+      async getWorker() {
+        if (this.worker && this.isReady) return this.worker;
+        if (typeof Tesseract === 'undefined') {
+          console.warn('[WebOCR] window.Tesseract is not defined');
+          return null;
+        }
+        if (!this.workerPromise) {
+          this.workerPromise = (async () => {
+            console.log('[WebOCR] Initializing Tesseract.js worker with uppercase/digit whitelist...');
+            try {
+              const w = await Tesseract.createWorker('eng', 1);
+              try {
+                await w.setParameters({
+                  tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- ',
+                });
+              } catch (e) {
+                console.warn('[WebOCR] setParameters notice:', e);
+              }
+              this.worker = w;
+              this.isReady = true;
+              console.log('[WebOCR] Tesseract worker ready!');
+              return w;
+            } catch (err) {
+              this.lastError = String(err);
+              console.warn('[WebOCR] Failed to initialize worker:', err);
+              return null;
+            }
+          })();
+        }
+        return await this.workerPromise;
+      },
+
+      async recognize(source) {
+        if (!source) return null;
+
+        // Ensure we have a valid ImageBitmapSource for TextDetector
+        let imageElement = null;
+        if (typeof source === 'string') {
+          try {
+            imageElement = await new Promise((resolve, reject) => {
+              const img = new Image();
+              img.crossOrigin = 'anonymous';
+              img.onload = () => resolve(img);
+              img.onerror = (e) => reject(e);
+              img.src = source;
+            });
+          } catch (e) {
+            console.warn('[WebOCR] Could not decode image source for TextDetector:', e);
+          }
+        } else {
+          imageElement = source;
+        }
+
+        // 1. Fast path: Native Chromium Shape Detection API (window.TextDetector)
+        if ('TextDetector' in window && imageElement) {
+          try {
+            const detector = new window.TextDetector();
+            const detected = await detector.detect(imageElement);
+            if (detected && detected.length > 0) {
+              const lines = detected
+                .map(d => (d.rawValue || '').trim())
+                .filter(t => t.length > 0);
+              if (lines.length > 0) {
+                const combined = lines.join('\n');
+                console.log('[WebOCR] TextDetector recognized text:\n' + combined);
+                return combined;
+              }
+            }
+          } catch (e) {
+            console.warn('[WebOCR] TextDetector notice:', e);
+          }
+        }
+
+        // 2. High-accuracy Tesseract.js Worker
+        try {
+          const w = await this.getWorker();
+          if (w) {
+            const res = await w.recognize(source);
+            if (res && res.data && res.data.text && res.data.text.trim().length > 0) {
+              const recognized = res.data.text.trim();
+              console.log('[WebOCR] Tesseract worker recognized text:\n' + recognized);
+              return recognized;
+            }
+          }
+        } catch (e) {
+          console.warn('[WebOCR] Worker recognize error:', e);
+        }
+
+        // 3. Fallback to direct Tesseract.recognize
+        if (typeof Tesseract !== 'undefined') {
+          try {
+            const res = await Tesseract.recognize(source, 'eng');
+            if (res && res.data && res.data.text && res.data.text.trim().length > 0) {
+              const recognized = res.data.text.trim();
+              console.log('[WebOCR] Direct Tesseract recognized text:\n' + recognized);
+              return recognized;
+            }
+          } catch (e) {
+            this.lastError = String(e);
+            console.warn('[WebOCR] Direct Tesseract recognize error:', e);
+          }
+        }
+
+        return null;
+      },
+
+      startRecognize(id, source) {
+        this.pendingResults[id] = { done: false, text: '' };
+        this.recognize(source)
+          .then(res => {
+            this.pendingResults[id] = { done: true, text: res || '' };
+          })
+          .catch(err => {
+            console.warn('[WebOCR] recognize error for id ' + id, err);
+            this.pendingResults[id] = { done: true, text: '' };
+          });
+      },
+
+      checkResult(id) {
+        const item = this.pendingResults[id];
+        if (item && item.done) {
+          const text = item.text;
+          delete this.pendingResults[id];
+          return text;
+        }
+        return null;
+      }
+    };
+
+    // Pre-initialize Tesseract worker in background on page load
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        if (window.ocrBridge) window.ocrBridge.getWorker();
+      }, 500);
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

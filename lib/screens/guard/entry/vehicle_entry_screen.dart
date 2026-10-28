@@ -14,6 +14,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../models/guard_model.dart';
 import '../../../models/shift_model.dart';
+import '../../../models/system_settings_model.dart';
 import '../../../models/vehicle_type.dart';
 import '../../../services/monthly_pass_service.dart';
 import '../../../services/notification_service.dart';
@@ -53,6 +54,8 @@ class VehicleEntryScreen extends StatefulWidget {
   static LiveCameraOcrService? mockLiveOcrService;
   static bool? mockIsWeb;
 
+  static bool enableAnimationInTest = false;
+
   static void resetTestMocks() {
     mockScanResult = null;
     mockCameraPermissionDenied = false;
@@ -61,6 +64,7 @@ class VehicleEntryScreen extends StatefulWidget {
     mockContinuousFrameCount = 2;
     mockLiveOcrService = null;
     mockIsWeb = null;
+    enableAnimationInTest = false;
     LiveCameraOcrService.resetMocks();
   }
 
@@ -75,7 +79,8 @@ class VehicleEntryScreen extends StatefulWidget {
   State<VehicleEntryScreen> createState() => _VehicleEntryScreenState();
 }
 
-class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBindingObserver {
+class _VehicleEntryScreenState extends State<VehicleEntryScreen>
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _vehicleNumberController = TextEditingController();
   final _mobileController = TextEditingController();
@@ -87,6 +92,7 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
   final _settingsService = SettingsService.instance;
   final _imagePicker = ImagePicker();
   final _monthlyPassService = MonthlyPassService.instance;
+  StreamSubscription<SystemSettingsModel>? _settingsSubscription;
 
   // Camera & Live Continuous OCR State
   CameraController? _cameraController;
@@ -121,6 +127,13 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
   bool _isScanningActive = true;
   String? _scannerStatusMessage;
 
+  // QR Scanner-style Animated Horizontal Scanning Laser Line
+  late final AnimationController _scanLineController;
+  late final Animation<double> _scanLineAnimation;
+
+  @visibleForTesting
+  AnimationController get scanLineController => _scanLineController;
+
   // Frame Debounce to prevent repeatedly processing the same plate on consecutive frames
   String? _lastDebouncedPlate;
   DateTime? _lastDebounceTime;
@@ -145,13 +158,55 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
   VehiclePassCheckResult? _passCheckResult;
   bool _isCheckingPass = false;
 
+  void _updateScanLineAnimation() {
+    if (!mounted) return;
+    final isTest = WidgetsBinding.instance.runtimeType.toString().contains('Test');
+    final shouldRun = !isTest || VehicleEntryScreen.enableAnimationInTest;
+
+    final isCameraActive = _isWeb
+        ? _isWebCameraActive
+        : ((_cameraController != null && _cameraController!.value.isInitialized) ||
+            VehicleEntryScreen.mockContinuousPlateCandidate != null ||
+            VehicleEntryScreen.mockScanResult != null);
+
+    final shouldAnimate = _isScanningActive &&
+        !_isPlateConfirmed &&
+        !_isCameraPermissionDenied &&
+        isCameraActive;
+
+    if (shouldAnimate) {
+      if (shouldRun && !_scanLineController.isAnimating) {
+        _scanLineController.repeat(reverse: true);
+      }
+    } else {
+      if (_scanLineController.isAnimating) {
+        _scanLineController.stop();
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _scanLineController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    );
+    _scanLineAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _scanLineController, curve: Curves.easeInOut),
+    );
+    _scanLineController.value = 0.5;
+
     WidgetsBinding.instance.addObserver(this);
     _checkCapacity();
     _vehicleNumberController.addListener(_onVehicleNumberChanged);
     _initScanner();
+    _updateScanLineAnimation();
+    _settingsSubscription = _settingsService.watchSettings().listen((updated) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
   }
 
   @override
@@ -164,16 +219,20 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
       if (controller.value.isStreamingImages) {
         controller.stopImageStream();
       }
+      _updateScanLineAnimation();
     } else if (state == AppLifecycleState.resumed && _isScanningActive) {
       if (!controller.value.isStreamingImages) {
         _startImageStream();
       }
+      _updateScanLineAnimation();
     }
   }
 
   @override
   void dispose() {
+    _scanLineController.dispose();
     WidgetsBinding.instance.removeObserver(this);
+    _settingsSubscription?.cancel();
     _passCheckDebounce?.cancel();
     _vehicleNumberController.removeListener(_onVehicleNumberChanged);
     _vehicleNumberController.dispose();
@@ -395,8 +454,11 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
           return;
         }
 
-        // 2. Capture video frame
-        final frameBytes = await WebCameraPlatform.captureFrame(_webCameraViewId);
+        // 2. Capture video frame cropped to framing guide ROI
+        final frameBytes = await WebCameraPlatform.captureFrame(
+          _webCameraViewId,
+          cropToFramingGuide: true,
+        );
         if (frameBytes == null || frameBytes.isEmpty) {
           if (kDebugMode) {
             debugPrint('[VehicleEntry WebOCR] Frame capture returned empty/video not ready.');
@@ -421,56 +483,63 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
 
         if (!mounted) return;
 
-        // Diagnostic log: raw data & errors
-        if (kDebugMode) {
-          debugPrint('[VehicleEntry WebOCR] OCR raw text: "${evaluated.rawData}" | Error: "${evaluated.errorMessage}"');
-        }
+        // Diagnostic log in DevTools console: raw text, candidate, and error
+        debugPrint('[VehicleEntry WebOCR] OCR raw text: "${evaluated.rawData}" | Error: "${evaluated.errorMessage}"');
 
         // If raw text was recognized
         if (evaluated.rawData != null && evaluated.rawData!.trim().isNotEmpty) {
           if (mounted && _detectedOcrPlate == null && !_liveOcrService.stabilityTracker.hasPendingCandidate) {
             setState(() {
-              _scannerStatusMessage = 'Text detected';
+              _scannerStatusMessage = evaluated.hasPlate
+                  ? 'Validating plate'
+                  : AppStrings.plateNotClearReposition;
             });
           }
         }
 
-        if (evaluated.hasPlate) {
+        if (evaluated.hasPlate && evaluated.confidence >= 0.75) {
           final candidate = evaluated.plateNumber!;
-          if (kDebugMode) {
-            debugPrint('[VehicleEntry WebOCR] Candidate extracted: $candidate (confidence: ${evaluated.confidence})');
-          }
-
-          if (mounted && _detectedOcrPlate == null) {
-            setState(() {
-              _scannerStatusMessage = 'Validating plate';
-            });
-          }
+          debugPrint('[VehicleEntry WebOCR] Candidate extracted: $candidate (confidence: ${evaluated.confidence})');
 
           final stable = _liveOcrService.stabilityTracker.addCandidate(candidate);
           final count = _liveOcrService.stabilityTracker.consecutiveCount;
 
-          if (kDebugMode) {
-            debugPrint('[VehicleEntry WebOCR] Stability: candidate=$candidate, count=$count/2, stable=$stable');
-          }
+          debugPrint('[VehicleEntry WebOCR] Stability: candidate=$candidate, count=$count/2, stable=$stable');
 
-          if (stable != null && mounted) {
-            if (kDebugMode) {
-              debugPrint('[VehicleEntry WebOCR] Plate locked: $stable. Populating vehicle number field.');
-            }
+          // Candidate locking: require multi-frame consensus before locking onto form
+          final shouldLock = stable != null;
+          final plateToLock = stable;
+
+          if (shouldLock && plateToLock != null && mounted) {
+            debugPrint('[VehicleEntry WebOCR] Plate locked: $plateToLock. Populating vehicle number field.');
             setState(() {
-              _scannerStatusMessage = 'Plate detected: $stable';
+              _scannerStatusMessage = 'Plate detected: $plateToLock';
             });
-            _handleLivePlateDetected(stable, evaluated.confidence);
+            _handleLivePlateDetected(plateToLock, evaluated.confidence);
             if (_platePhotoBytes == null) {
               setState(() {
                 _platePhotoBytes = frameBytes;
               });
             }
+          } else if (mounted && _detectedOcrPlate == null) {
+            setState(() {
+              _scannerStatusMessage = _liveOcrService.stabilityTracker.hasPendingCandidate
+                  ? AppStrings.verifyingStability
+                  : 'Validating plate';
+            });
           }
         } else {
           _liveOcrService.stabilityTracker.registerEmptyFrame();
-          if (kDebugMode && evaluated.errorMessage != null) {
+          if (mounted && _detectedOcrPlate == null) {
+            setState(() {
+              if (evaluated.rawData != null && evaluated.rawData!.trim().isNotEmpty) {
+                _scannerStatusMessage = AppStrings.plateNotClearReposition;
+              } else {
+                _scannerStatusMessage = 'Scanning for plate';
+              }
+            });
+          }
+          if (evaluated.errorMessage != null) {
             debugPrint('[VehicleEntry WebOCR] Plate rejected: ${evaluated.errorMessage}');
           }
         }
@@ -1164,6 +1233,8 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
 
     final settings = _settingsService.currentSettings;
     final vehicleNumber = AppFormatters.normalizeVehicleNumber(_vehicleNumberController.text);
+    final rawMobile = _mobileController.text.trim();
+    debugPrint('[VehicleEntry] _submitEntry: requireCustomerMobile=${settings.requireCustomerMobile}, customerMobileVisible=${settings.customerMobileVisible}, rawMobile="$rawMobile"');
 
     // 2. Validate Vehicle Number requiredness & mandatory confirmation
     if (settings.requireNumberPlate && vehicleNumber.isEmpty) {
@@ -1197,26 +1268,23 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
     }
 
     // 3. Customer Mobile validation (based on Admin Settings)
-    final rawMobile = _mobileController.text.trim();
-    if (settings.customerMobileVisible && settings.requireCustomerMobile) {
-      if (!_isValidCustomerMobile(rawMobile)) {
+    if (settings.customerMobileVisible) {
+      if (settings.requireCustomerMobile) {
+        if (!_isValidCustomerMobile(rawMobile)) {
+          setState(() {
+            _errorMessage = rawMobile.isEmpty ? AppStrings.mobileRequired : AppStrings.invalidMobile;
+          });
+          return;
+        }
+      } else if (rawMobile.isNotEmpty && !_isValidCustomerMobile(rawMobile)) {
         setState(() {
-          _errorMessage = rawMobile.isEmpty ? AppStrings.mobileRequired : AppStrings.invalidMobile;
+          _errorMessage = AppStrings.invalidMobile;
         });
         return;
       }
     }
 
-    // 4. Number Plate Photo requiredness (based on Admin Settings)
-    if (settings.requirePlatePhoto &&
-        (_platePhotoBytes == null ||
-         _platePhotoBytes!.isEmpty ||
-         PlateScannerService.isPlaceholder(_platePhotoBytes))) {
-      setState(() {
-        _errorMessage = AppStrings.numberPlatePhotoRequired;
-      });
-      return;
-    }
+    // 4. Number Plate Photo is optional: a missing photo does not block vehicle entry.
 
     // 5. Parking Capacity Check
     if (_availableCapacity <= 0) {
@@ -1253,12 +1321,14 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
       widget.currentGuard.name,
     );
     if (activeShift == null) {
-      await _notificationService.createNotification(
-        recipientUserId: widget.currentGuard.uid,
-        title: AppStrings.entryBlocked,
-        message: AppStrings.noActiveShiftAssignedWarning,
-        type: 'entry_blocked',
-      );
+      try {
+        await _notificationService.createNotification(
+          recipientUserId: widget.currentGuard.uid,
+          title: AppStrings.entryBlocked,
+          message: AppStrings.noActiveShiftAssignedWarning,
+          type: 'entry_blocked',
+        );
+      } catch (_) {}
       setState(() {
         _isLoading = false;
         _errorMessage = AppStrings.noActiveShiftWarning;
@@ -1632,6 +1702,8 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
   }
 
   Widget _buildCameraViewport({required double height}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateScanLineAnimation());
+
     if (_isCameraPermissionDenied) {
       return Container(
         key: const ValueKey('camera_permission_denied_card'),
@@ -1836,60 +1908,331 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
                 ),
               ),
 
-            // Number Plate Horizontal Framing / Focus Guide
-            Container(
-              key: const ValueKey('number_plate_framing_guide'),
-              width: 240,
-              height: 90,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: _hasConflict
-                      ? AppColors.danger
-                      : (_detectedQrPlate != null || _detectedOcrPlate != null
-                          ? AppColors.success
-                          : AppColors.primary),
-                  width: 2.5,
-                ),
-                color: Colors.black.withValues(alpha: 0.15),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.65),
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
-                    ),
-                    child: Text(
-                      AppStrings.numberPlateFramingGuide,
-                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      _hasConflict
-                          ? 'Plate Conflict Detected'
-                          : (_detectedQrPlate != null || _detectedOcrPlate != null
-                              ? 'Plate detected: ${_detectedOcrPlate ?? _detectedQrPlate}'
-                              : (_scannerStatusMessage != null && _scannerStatusMessage!.isNotEmpty
-                                  ? _scannerStatusMessage!
-                                  : (isStreamActive ? 'Align Plate / QR' : 'Waiting for Camera...'))),
-                      style: TextStyle(
-                        color: _hasConflict
-                            ? AppColors.dangerLight
-                            : (_detectedQrPlate != null || _detectedOcrPlate != null
-                                ? AppColors.successLight
-                                : Colors.white70),
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
+            // QR Scanner-Style Responsive Number Plate Framing Guide
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final availableWidth = constraints.maxWidth;
+                final isCompact = height <= 240;
+
+                // Significantly enlarged inner green detection box:
+                // - Approximately 95% of usable camera preview width
+                // - Approximately 65–70% of preview height (height * 0.68), centered
+                // - Leaves a small margin around preview edges so the box does not touch camera boundary
+                final targetWidth = availableWidth * 0.95;
+                final frameWidth = targetWidth.clamp(260.0, availableWidth - 12.0);
+
+                final targetHeight = height * 0.68;
+                final frameHeight = targetHeight.clamp(120.0, height - 16.0);
+
+                final themeColor = _hasConflict
+                    ? AppColors.danger
+                    : (_detectedQrPlate != null || _detectedOcrPlate != null
+                        ? AppColors.success
+                        : AppColors.primary);
+
+                final showScanningAnimation = isStreamActive && _isScanningActive && !_isPlateConfirmed;
+
+                return Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Viewfinder Dark Mask Scrim: softly dims outer preview while keeping framing guide clear
+                    if (isStreamActive)
+                      Positioned.fill(
+                        child: CustomPaint(
+                          painter: _ScannerMaskPainter(
+                            frameWidth: frameWidth,
+                            frameHeight: frameHeight,
+                            cornerRadius: 10.0,
+                            scrimColor: Colors.black.withValues(alpha: 0.28),
+                          ),
+                        ),
+                      ),
+
+                    // Central Framing Guide
+                    SizedBox(
+                      key: const ValueKey('number_plate_framing_guide'),
+                      width: frameWidth,
+                      height: frameHeight,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Stack(
+                          clipBehavior: Clip.antiAlias,
+                          children: [
+                            // 1. Four clear corner brackets around scanning area & guide border
+                            Positioned.fill(
+                              child: CustomPaint(
+                                painter: _ScannerCornerPainter(
+                                  cornerColor: themeColor,
+                                  cornerLength: isCompact ? 32.0 : 40.0,
+                                  cornerThickness: 4.0,
+                                  cornerRadius: 10.0,
+                                  borderAlpha: 0.20,
+                                ),
+                              ),
+                            ),
+
+                            // 2. Translucent viewport background tint within the frame
+                            Positioned.fill(
+                              child: Container(
+                                margin: const EdgeInsets.all(2),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(8),
+                                  color: Colors.black.withValues(alpha: 0.05),
+                                ),
+                              ),
+                            ),
+
+                            // 3. Smooth animated horizontal scanning line moving vertically
+                            if (showScanningAnimation)
+                              _buildScanningLaserBeam(
+                                frameWidth: frameWidth,
+                                frameHeight: frameHeight,
+                                color: themeColor,
+                              ),
+
+                            // 4. Confirmed status badge overlay when confirmed
+                            if (_isPlateConfirmed)
+                              _buildPlateConfirmedBadge(),
+
+                            // 5. Framing guide label and real-time detection status
+                            Positioned.fill(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  // Top Guide Pill
+                                  Container(
+                                    margin: const EdgeInsets.only(top: 6, left: 10, right: 10),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.70),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: themeColor.withValues(alpha: 0.45),
+                                        width: 0.8,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.crop_free,
+                                          size: 11,
+                                          color: themeColor.withValues(alpha: 0.9),
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Flexible(
+                                          child: Text(
+                                            AppStrings.numberPlateFramingGuide,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w600,
+                                              letterSpacing: 0.2,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  // Bottom Status Pill / Result
+                                  Container(
+                                    margin: const EdgeInsets.only(bottom: 6, left: 10, right: 10),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.80),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: (_hasConflict
+                                                ? AppColors.danger
+                                                : (_detectedQrPlate != null || _detectedOcrPlate != null
+                                                    ? AppColors.success
+                                                    : Colors.white24))
+                                            .withValues(alpha: 0.5),
+                                        width: 0.8,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (_detectedQrPlate != null || _detectedOcrPlate != null) ...[
+                                          const Icon(Icons.check_circle, color: AppColors.successLight, size: 11),
+                                          const SizedBox(width: 4),
+                                        ] else if (showScanningAnimation) ...[
+                                          Container(
+                                            width: 6,
+                                            height: 6,
+                                            decoration: BoxDecoration(
+                                              color: themeColor,
+                                              shape: BoxShape.circle,
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: themeColor.withValues(alpha: 0.8),
+                                                  blurRadius: 4,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 5),
+                                        ],
+                                        Flexible(
+                                          child: Text(
+                                            _hasConflict
+                                                ? 'Plate Conflict Detected'
+                                                : (_detectedQrPlate != null || _detectedOcrPlate != null
+                                                    ? 'Plate detected: ${_detectedOcrPlate ?? _detectedQrPlate}'
+                                                    : (_scannerStatusMessage != null && _scannerStatusMessage!.isNotEmpty
+                                                        ? _scannerStatusMessage!
+                                                        : (isStreamActive ? 'Align Plate / QR' : 'Waiting for Camera...'))),
+                                            style: TextStyle(
+                                              color: _hasConflict
+                                                  ? AppColors.dangerLight
+                                                  : (_detectedQrPlate != null || _detectedOcrPlate != null
+                                                      ? AppColors.successLight
+                                                      : Colors.white70),
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScanningLaserBeam({
+    required double frameWidth,
+    required double frameHeight,
+    required Color color,
+  }) {
+    return AnimatedBuilder(
+      animation: _scanLineAnimation,
+      builder: (context, child) {
+        final minY = 6.0;
+        final maxY = (frameHeight - 24.0).clamp(minY, frameHeight);
+        final currentY = minY + (_scanLineAnimation.value * (maxY - minY));
+
+        return Positioned(
+          key: const ValueKey('scanner_animated_scan_line'),
+          top: currentY,
+          left: 4.0,
+          right: 4.0,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Laser beam upper soft glow
+              Container(
+                height: 10.0,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      color.withValues(alpha: 0.0),
+                      color.withValues(alpha: 0.22),
+                    ],
                   ),
-                ],
+                ),
+              ),
+              // Sharp intense horizontal scanner laser line with radiant core
+              Container(
+                height: 2.5,
+                margin: const EdgeInsets.symmetric(horizontal: 2.0),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      color.withValues(alpha: 0.2),
+                      color,
+                      Colors.white,
+                      color,
+                      color.withValues(alpha: 0.2),
+                    ],
+                    stops: const [0.0, 0.2, 0.5, 0.8, 1.0],
+                  ),
+                  borderRadius: BorderRadius.circular(2.0),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.85),
+                      blurRadius: 10.0,
+                      spreadRadius: 1.5,
+                    ),
+                    BoxShadow(
+                      color: Colors.white.withValues(alpha: 0.6),
+                      blurRadius: 3.0,
+                    ),
+                  ],
+                ),
+              ),
+              // Laser beam lower soft glow
+              Container(
+                height: 10.0,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      color.withValues(alpha: 0.22),
+                      color.withValues(alpha: 0.0),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPlateConfirmedBadge() {
+    return Center(
+      child: Container(
+        key: const ValueKey('plate_confirmed_badge'),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppColors.success.withValues(alpha: 0.90),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.check_circle_outline, color: Colors.white, size: 16),
+            const SizedBox(width: 6),
+            Text(
+              AppStrings.plateConfirmed,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.3,
               ),
             ),
           ],
@@ -1913,8 +2256,8 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
       child: Row(
         children: [
           Container(
-            width: 58,
-            height: 44,
+            width: 48,
+            height: 38,
             decoration: BoxDecoration(
               color: Colors.grey.shade300,
               borderRadius: BorderRadius.circular(6),
@@ -1932,11 +2275,11 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
                       errorBuilder: (context, error, stackTrace) => const Icon(
                         Icons.photo,
                         color: AppColors.textSecondary,
-                        size: 20,
+                        size: 18,
                       ),
                     ),
                   )
-                : const Icon(Icons.camera_alt, color: AppColors.textSecondary, size: 20),
+                : const Icon(Icons.camera_alt, color: AppColors.textSecondary, size: 18),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -1954,7 +2297,7 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
                 Text(
                   hasRealPlatePhoto
                       ? AppStrings.autoCapturedOnDetection
-                      : AppStrings.numberPlatePhotoRequired,
+                      : AppStrings.numberPlatePhotoOptional,
                   style: TextStyle(
                     fontSize: 10,
                     color: hasRealPlatePhoto ? AppColors.successDark : AppColors.textSecondary,
@@ -1970,18 +2313,18 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
             key: const ValueKey('retake_plate_photo_button'),
             onPressed: _capturePlatePhoto,
             style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.camera_alt, size: 13),
+                const Icon(Icons.camera_alt, size: 12),
                 const SizedBox(width: 4),
                 Text(
                   AppStrings.retakePlatePhoto,
-                  style: const TextStyle(fontSize: 11),
+                  style: const TextStyle(fontSize: 10),
                 ),
               ],
             ),
@@ -2785,3 +3128,154 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> with WidgetsBin
     );
   }
 }
+
+/// Custom painter for modern QR scanner style corner brackets, glow depth pass, and HUD center guides.
+class _ScannerCornerPainter extends CustomPainter {
+  final Color cornerColor;
+  final double cornerLength;
+  final double cornerThickness;
+  final double cornerRadius;
+  final double borderAlpha;
+
+  const _ScannerCornerPainter({
+    required this.cornerColor,
+    this.cornerLength = 32.0,
+    this.cornerThickness = 4.0,
+    this.cornerRadius = 10.0,
+    this.borderAlpha = 0.20,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    // 1. Subtle bounding guide border connecting the corners
+    if (borderAlpha > 0) {
+      final borderPaint = Paint()
+        ..color = cornerColor.withValues(alpha: borderAlpha)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0;
+      final borderRRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, w, h),
+        Radius.circular(cornerRadius),
+      );
+      canvas.drawRRect(borderRRect, borderPaint);
+    }
+
+    // 2. Clear four corner brackets with neon depth glow
+    final r = cornerRadius;
+    final l = cornerLength.clamp(r + 2, w / 2);
+
+    final tlPath = Path()
+      ..moveTo(0, l)
+      ..lineTo(0, r)
+      ..quadraticBezierTo(0, 0, r, 0)
+      ..lineTo(l, 0);
+
+    final trPath = Path()
+      ..moveTo(w - l, 0)
+      ..lineTo(w - r, 0)
+      ..quadraticBezierTo(w, 0, w, r)
+      ..lineTo(w, l);
+
+    final blPath = Path()
+      ..moveTo(0, h - l)
+      ..lineTo(0, h - r)
+      ..quadraticBezierTo(0, h, r, h)
+      ..lineTo(l, h);
+
+    final brPath = Path()
+      ..moveTo(w, h - l)
+      ..lineTo(w, h - r)
+      ..quadraticBezierTo(w, h, w - r, h)
+      ..lineTo(w - l, h);
+
+    // Glow underlayer
+    final glowPaint = Paint()
+      ..color = cornerColor.withValues(alpha: 0.35)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = cornerThickness + 3.0
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    canvas.drawPath(tlPath, glowPaint);
+    canvas.drawPath(trPath, glowPaint);
+    canvas.drawPath(blPath, glowPaint);
+    canvas.drawPath(brPath, glowPaint);
+
+    // Sharp foreground corner brackets
+    final cornerPaint = Paint()
+      ..color = cornerColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = cornerThickness
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    canvas.drawPath(tlPath, cornerPaint);
+    canvas.drawPath(trPath, cornerPaint);
+    canvas.drawPath(blPath, cornerPaint);
+    canvas.drawPath(brPath, cornerPaint);
+
+    // 3. Subtle horizontal alignment ticks at center left & right (parking HUD aiming guide)
+    final tickPaint = Paint()
+      ..color = cornerColor.withValues(alpha: 0.40)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    final midY = h / 2;
+    canvas.drawLine(Offset(4, midY), Offset(14, midY), tickPaint);
+    canvas.drawLine(Offset(w - 14, midY), Offset(w - 4, midY), tickPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScannerCornerPainter oldDelegate) {
+    return oldDelegate.cornerColor != cornerColor ||
+        oldDelegate.cornerLength != cornerLength ||
+        oldDelegate.cornerThickness != cornerThickness ||
+        oldDelegate.cornerRadius != cornerRadius ||
+        oldDelegate.borderAlpha != borderAlpha;
+  }
+}
+
+/// Custom painter for modern QR scanner viewfinder mask that softly dims preview outside detection frame.
+class _ScannerMaskPainter extends CustomPainter {
+  final double frameWidth;
+  final double frameHeight;
+  final double cornerRadius;
+  final Color scrimColor;
+
+  const _ScannerMaskPainter({
+    required this.frameWidth,
+    required this.frameHeight,
+    required this.cornerRadius,
+    required this.scrimColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (scrimColor.a == 0) return;
+    final left = (size.width - frameWidth) / 2;
+    final top = (size.height - frameHeight) / 2;
+    final frameRect = Rect.fromLTWH(left, top, frameWidth, frameHeight);
+
+    final bgPath = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    final cutoutPath = Path()
+      ..addRRect(RRect.fromRectAndRadius(frameRect, Radius.circular(cornerRadius)));
+    final combined = Path.combine(PathOperation.difference, bgPath, cutoutPath);
+
+    final paint = Paint()
+      ..color = scrimColor
+      ..style = PaintingStyle.fill;
+    canvas.drawPath(combined, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScannerMaskPainter oldDelegate) {
+    return oldDelegate.frameWidth != frameWidth ||
+        oldDelegate.frameHeight != frameHeight ||
+        oldDelegate.cornerRadius != cornerRadius ||
+        oldDelegate.scrimColor != scrimColor;
+  }
+}
+

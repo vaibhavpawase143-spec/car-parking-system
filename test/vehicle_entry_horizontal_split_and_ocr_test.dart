@@ -268,7 +268,7 @@ void main() {
       expect(find.byKey(const ValueKey('edit_plate_button')), findsOneWidget);
     });
 
-    testWidgets('8. Number plate photo required by settings blocks save when missing', (tester) async {
+    testWidgets('8. Number plate photo is optional and does NOT block save when missing', (tester) async {
       tester.view.physicalSize = const Size(1280, 1600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {
@@ -288,6 +288,9 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+
+      // Preview card shows photo is optional
+      expect(find.text(AppStrings.numberPlatePhotoOptional), findsOneWidget);
 
       // Confirm valid plate number manually (without camera capture)
       final plateFinder = find.byKey(const ValueKey('vehicle_number_field'));
@@ -312,8 +315,8 @@ void main() {
       await tester.tap(saveBtn);
       await tester.pumpAndSettle();
 
-      // Missing photo blocked save (displayed in preview status card and error banner)
-      expect(find.text(AppStrings.numberPlatePhotoRequired), findsWidgets);
+      // Missing photo does NOT block save! No photo required error is thrown.
+      expect(find.text(AppStrings.numberPlatePhotoRequired), findsNothing);
     });
 
     testWidgets('9. Optional Vehicle Photo does NOT block save when empty', (tester) async {
@@ -437,7 +440,7 @@ void main() {
       expect(find.byKey(const ValueKey('edit_plate_button')), findsOneWidget);
     });
 
-    testWidgets('13. Transparent 1x1 placeholder is NEVER treated as real photo and blocks saving when photo is required', (tester) async {
+    testWidgets('13. Transparent 1x1 placeholder is NEVER treated as real photo and does NOT block save', (tester) async {
       tester.view.physicalSize = const Size(1280, 1600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {
@@ -478,8 +481,8 @@ void main() {
       await tester.enterText(mobileFinder, '9876543210');
       await tester.pumpAndSettle();
 
-      // Preview card STILL indicates photo is required (because 1x1 placeholder was rejected!)
-      expect(find.text(AppStrings.numberPlatePhotoRequired), findsWidgets);
+      // Preview card indicates photo is optional (because 1x1 placeholder was rejected as genuine photo)
+      expect(find.text(AppStrings.numberPlatePhotoOptional), findsOneWidget);
 
       // Attempt save
       final saveBtn = find.byKey(const ValueKey('save_entry_button'));
@@ -487,8 +490,8 @@ void main() {
       await tester.tap(saveBtn);
       await tester.pumpAndSettle();
 
-      // Save was blocked because transparent placeholder is NOT accepted as a real photo!
-      expect(find.text(AppStrings.numberPlatePhotoRequired), findsWidgets);
+      // Missing genuine photo does NOT block saving
+      expect(find.text(AppStrings.numberPlatePhotoRequired), findsNothing);
     });
 
     testWidgets('14. OCR extraction logic correctly normalizes noisy text candidates', (tester) async {

@@ -128,7 +128,7 @@ class LiveCameraOcrPlatform {
 
   // Matches Indian HSRP / standard plates with 36 state codes (e.g. MH 12 AB 1234, IND MH12AB1234, MH-12-AB-1234)
   static final RegExp _indianStatePlatePattern = RegExp(
-    r'(?:IND[\s\.\-]*)?(AP|AR|AS|BR|CG|CH|DD|DL|DN|GA|GJ|HP|HR|JH|JK|KA|KL|LA|LD|MH|ML|MN|MP|MZ|NL|OD|OR|PB|PY|RJ|SK|TN|TR|TS|UA|UK|UP|WB)\s*([0-9]{1,2})\s*([A-Z]{0,3})\s*([0-9]{1,4})',
+    r'(?:IND[\s\.\-]*)?(AN|AP|AR|AS|BR|CG|CH|DD|DL|DN|GA|GJ|HP|HR|JH|JK|KA|KL|LA|LD|MH|ML|MN|MP|MZ|NL|OD|OR|PB|PY|RJ|SK|TN|TR|TS|UA|UK|UP|WB)\s*([0-9]{1,2})\s*([A-Z]{0,3})\s*([0-9]{1,4})',
     caseSensitive: false,
   );
 
@@ -150,7 +150,7 @@ class LiveCameraOcrPlatform {
     for (final block in recognizedText.blocks) {
       for (final line in block.lines) {
         final t = line.text.trim();
-        if (t.isNotEmpty) {
+        if (t.isNotEmpty && !PlateScannerService.isBackgroundNoiseText(t)) {
           lines.add(t);
         }
       }
@@ -158,6 +158,7 @@ class LiveCameraOcrPlatform {
 
     // 1. Prioritized state-code regex extraction across each line (handles "IND MH 12 AB 1234", "IND•MH12AB1234", "MH-12-AB-1234")
     for (final line in lines) {
+      if (PlateScannerService.isBackgroundNoiseText(line)) continue;
       for (final match in _indianStatePlatePattern.allMatches(line)) {
         final matchedText = match.group(0)!;
         final normalized = AppFormatters.normalizeVehicleNumber(matchedText);

@@ -61,24 +61,40 @@ class AppFormatters {
     return normalizeVehicleNumber(trimmed);
   }
 
+  /// Recognized 2-letter State & Union Territory codes in India.
+  static const Set<String> kValidIndianStateCodes = {
+    'AN', 'AP', 'AR', 'AS', 'BR', 'CG', 'CH', 'DD', 'DL', 'DN',
+    'GA', 'GJ', 'HP', 'HR', 'JH', 'JK', 'KA', 'KL', 'LA', 'LD',
+    'MH', 'ML', 'MN', 'MP', 'MZ', 'NL', 'OD', 'OR', 'PB', 'PY',
+    'RJ', 'SK', 'TN', 'TR', 'TS', 'UA', 'UK', 'UP', 'WB',
+  };
+
   /// Validates an Indian vehicle registration number.
   /// Accepts standard state-code registrations (e.g. MH12AB1234, MH12A1234, MH12AB123, MH12AB12345)
   /// and Bharat (BH) series registrations (e.g. 22BH1234AA).
-  /// Rejects empty values and obviously invalid patterns like ABC, 123456, @@@###, MH, 12AB, RANDOM123.
+  /// Strictly requires a recognized Indian State/UT code (e.g. MH, DL, KA, GJ, etc.) or Bharat (BH) format,
+  /// rejecting random words, clothes text, face noise, and invalid non-state prefixes like RO, BE, SH, FA, BO, PO.
   static bool isValidVehicleNumber(String? value) {
     if (value == null) return false;
     final normalized = normalizeVehicleNumber(value);
     if (normalized.length < 5 || normalized.length > 13) return false;
 
-    // Standard Indian format:
-    // State/UT code (2 letters) + RTO code (1-2 digits) + Series (0-3 letters) + Number (1-5 digits) + Optional sub-series (1 letter)
-    final standardPattern = RegExp(r'^[A-Z]{2}\d{1,2}[A-Z]{0,3}\d{1,5}[A-Z]?$');
-
     // Bharat (BH) series format:
     // Year (2 digits) + BH + 4 digits + 1-2 letters (e.g. 22BH1234AA)
     final bhPattern = RegExp(r'^\d{2}BH\d{4}[A-Z]{1,2}$');
+    if (bhPattern.hasMatch(normalized)) {
+      return true;
+    }
 
-    return standardPattern.hasMatch(normalized) || bhPattern.hasMatch(normalized);
+    // Standard Indian format:
+    // State/UT code (2 letters) + RTO code (1-2 digits) + Series (0-3 letters) + Number (1-5 digits)
+    final standardMatch = RegExp(r'^([A-Z]{2})\d{1,2}[A-Z]{0,3}\d{1,5}$').firstMatch(normalized);
+    if (standardMatch != null) {
+      final stateCode = standardMatch.group(1)!;
+      return kValidIndianStateCodes.contains(stateCode);
+    }
+
+    return false;
   }
 
   /// Validates a customer's local Indian mobile number:
